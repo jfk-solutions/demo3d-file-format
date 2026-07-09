@@ -1,0 +1,38 @@
+{
+  "name": "demo3d-file-format",
+  "version": "0.1.0",
+  "description": "Browser-first TypeScript parser for Demo3D .demo3d project files.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "demo3d",
+    "emulate3d",
+    "parser",
+    "typescript",
+    "esm"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.13",
+    "@xmldom/xmldom": "^0.9.8",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

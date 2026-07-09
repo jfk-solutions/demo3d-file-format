@@ -1,0 +1,79 @@
+import { decodeText, toUint8Array, type Demo3DInput } from "./binary.js";
+import { Demo3DUnsupportedError, Demo3DZipError } from "./errors.js";
+import { Demo3DPackage, Demo3DResource, extractProject } from "./model.js";
+import { defaultParseXml, type ParseXmlDocument, xmlDocumentToElement } from "./xml.js";
+import { parseZip, type ZipEntry, type ZipEntryInfo } from "./zip.js";
+
+export interface ParseDemo3DOptions {
+  readonly parseXml?: ParseXmlDocument;
+}
+
+export async function parseDemo3D(input: Demo3DInput, options: ParseDemo3DOptions = {}): Promise<Demo3DPackage> {
+  const bytes = toUint8Array(input);
+  const archive = parseZip(bytes);
+  const modelEntry = findModelEntry(archive.entries);
+  const modelBytes = await modelEntry.arrayBuffer();
+  const modelXml = decodeText(modelBytes, "utf-8");
+  const parseXml = options.parseXml ?? defaultParseXml;
+  const document = parseXml(modelXml);
+  const root = xmlDocumentToElement(document);
+  const model = extractProject(root);
+  const resources = archive.entries
+    .filter((entry) => isResourceEntry(entry.name))
+    .map((entry) => new Demo3DResource(entry.name, toEntryInfo(entry)));
+  const buffers = archive.entries
+    .filter((entry) => entry.name.toLowerCase().startsWith("buffers_md/"))
+    .map((entry) => new Demo3DResource(entry.name, toEntryInfo(entry)));
+  const thumbnailEntry = archive.entries.find((entry) => entry.name.toLowerCase() === "thumbnail.png");
+
+  return new Demo3DPackage(
+    archive.entries.map(toEntryInfo),
+    modelEntry.name,
+    modelXml,
+    model,
+    thumbnailEntry ? new Demo3DResource(thumbnailEntry.name, toEntryInfo(thumbnailEntry)) : undefined,
+    resources,
+    buffers
+  );
+}
+
+function findModelEntry(entries: readonly ZipEntry[]): ZipEntry {
+  const modelEntries = entries.filter((entry) => entry.name.toLowerCase().endsWith(".demo3d"));
+
+  if (modelEntries.length === 0) {
+    throw new Demo3DZipError("No nested .demo3d XML model entry was found in the package.");
+  }
+
+  const preferred = modelEntries.find((entry) => entry.uncompressedSize > 0 && entry.name.indexOf("/") === -1);
+  const entry = preferred ?? modelEntries[0];
+
+  if (entry.uncompressedSize === 0) {
+    throw new Demo3DUnsupportedError(`Model entry "${entry.name}" is empty.`, "DEMO3D_EMPTY_MODEL");
+  }
+
+  return entry;
+}
+
+function isResourceEntry(path: string): boolean {
+  const lower = path.toLowerCase();
+  return (
+    lower.startsWith("userresources/") ||
+    lower.endsWith(".xlsx") ||
+    lower.endsWith(".png") ||
+    lower.endsWith(".jpg") ||
+    lower.endsWith(".jpeg") ||
+    lower.endsWith(".bmp") ||
+    lower.endsWith(".gif")
+  );
+}
+
+function toEntryInfo(entry: ZipEntryInfo): ZipEntryInfo {
+  return {
+    name: entry.name,
+    compressedSize: entry.compressedSize,
+    uncompressedSize: entry.uncompressedSize,
+    compressionMethod: entry.compressionMethod,
+    flags: entry.flags,
+    crc32: entry.crc32
+  };
+}

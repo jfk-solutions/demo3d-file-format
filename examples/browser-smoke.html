@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo3D Parser Smoke Test</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem;
+        color: #202124;
+      }
+
+      label,
+      output {
+        display: block;
+        margin-block: 1rem;
+      }
+
+      pre {
+        border: 1px solid #dadce0;
+        padding: 1rem;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Demo3D Parser Smoke Test</h1>
+    <label>
+      <input id="file" type="file" accept=".demo3d" />
+    </label>
+    <output id="status">Choose a .demo3d file.</output>
+    <pre id="result"></pre>
+
+    <script type="module">
+      import { parseDemo3D } from "../dist/index.js";
+
+      const fileInput = document.querySelector("#file");
+      const status = document.querySelector("#status");
+      const result = document.querySelector("#result");
+
+      fileInput.addEventListener("change", async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+
+        status.value = "Parsing...";
+        result.textContent = "";
+
+        try {
+          const parsed = await parseDemo3D(await file.arrayBuffer());
+          const unknownTypes = Object.fromEntries(parsed.model.unknownTypes);
+          result.textContent = JSON.stringify(
+            {
+              modelEntryName: parsed.modelEntryName,
+              product: parsed.model.header.product,
+              version: parsed.model.header.version,
+              meshes: parsed.model.meshes.length,
+              rootVisuals: parsed.model.visuals.length,
+              typedObjects: parsed.model.typedObjects.length,
+              resources: parsed.resources.length,
+              buffers: parsed.buffers.length,
+              unknownTypeKinds: Object.keys(unknownTypes).length
+            },
+            null,
+            2
+          );
+          status.value = "Parsed.";
+        } catch (error) {
+          status.value = "Parse failed.";
+          result.textContent = error instanceof Error ? error.stack ?? error.message : String(error);
+        }
+      });
+    </script>
+  </body>
+</html>
