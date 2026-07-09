@@ -28,6 +28,16 @@ Runtime code has no production dependencies and uses browser APIs only. ZIP meth
 
 When parsing outside the browser, pass `parseXml` if `DOMParser` is not available.
 
+## Three Renderer Demo
+
+The Three.js smoke demo must be opened through a local HTTP server, not directly through `file://`, because browsers block module imports from unique file origins.
+
+```sh
+npm run demo:three
+```
+
+Then open the printed `http://127.0.0.1:.../examples/three-render-smoke.html` URL and choose a `.demo3d` file.
+
 ## Current Scope
 
 - Read-only parser.

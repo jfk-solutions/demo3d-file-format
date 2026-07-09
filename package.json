@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./three": {
+      "types": "./dist/three/index.d.ts",
+      "import": "./dist/three/index.js"
     }
   },
   "files": [
@@ -18,7 +22,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "demo:three": "npm run build && node scripts/serve-demo.mjs examples/three-render-smoke.html",
     "test": "vitest run",
+    "test:browser": "npm run build && playwright test",
     "test:watch": "vitest"
   },
   "keywords": [
@@ -29,9 +35,20 @@
     "esm"
   ],
   "license": "MIT",
+  "peerDependencies": {
+    "three": "^0.185.1"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^24.0.13",
+    "@types/three": "^0.185.1",
     "@xmldom/xmldom": "^0.9.8",
+    "three": "^0.185.1",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }

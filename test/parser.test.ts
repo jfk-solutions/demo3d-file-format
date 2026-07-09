@@ -20,7 +20,7 @@ describe("parseDemo3D", () => {
     expect(parsed.model.meshes).toHaveLength(1);
     expect(parsed.model.meshes[0]?.id).toBe("mesh-1");
     expect(parsed.model.meshes[0]?.meshFormat).toBe("TriangleList");
-    expect(parsed.model.meshes[0]?.vertices?.toUint8Array()).toEqual(new Uint8Array([0, 0, 0, 0]));
+    expect(parsed.model.meshes[0]?.vertices?.toUint8Array().byteLength).toBe(72);
     expect(parsed.model.visuals).toHaveLength(1);
     expect(parsed.model.visuals[0]?.id).toBe("visual-1");
     expect(parsed.model.visuals[0]?.displayName).toBe("Box 1");

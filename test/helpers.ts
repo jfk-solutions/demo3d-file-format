@@ -99,11 +99,11 @@ export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
             <MF xsi:type="Demo3D.Renderers.Meshes.MeshFormat">TriangleList</MF>
             <V>
               <VF xsi:type="Demo3D.Renderers.Meshes.VertexFormat">PositionNormal</VF>
-              <D>AAAAAA==</D>
+              <D>AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAA</D>
             </V>
             <I>
               <IF xsi:type="Demo3D.Renderers.Meshes.IndexFormat">UInt16</IF>
-              <D>AQACAA==</D>
+              <D>AAABAAIA</D>
             </I>
             <A>AAAAAA==</A>
           </MeshData>
@@ -118,6 +118,7 @@ export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
       <N>Box 1</N>
       <LR>|1|2|3|</LR>
       <P xsi:type="e3d:BoxProperties">
+        <Mesh><Id>mesh-1</Id></Mesh>
         <Material xsi:type="e3d:MeshMaterialProperty">
           <MeshMaterial xsi:type="e3d:MeshMaterial">
             <Diffuse>-16744448</Diffuse>

@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo3D Three Renderer Smoke Test</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "../node_modules/three/build/three.module.js",
+          "three/addons/": "../node_modules/three/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        color: #202124;
+      }
+
+      body {
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #dadce0;
+      }
+
+      button {
+        border: 1px solid #bdc1c6;
+        background: #fff;
+        border-radius: 4px;
+        padding: 0.35rem 0.65rem;
+        font: inherit;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: #f1f3f4;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <input id="demo3d-file" type="file" accept=".demo3d" />
+      <button id="fit-main" type="button" disabled>Fit main</button>
+      <button id="fit-all" type="button" disabled>Fit all</button>
+      <output id="status">Choose a .demo3d file.</output>
+    </header>
+    <canvas id="viewport"></canvas>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { parseDemo3D } from "../dist/index.js";
+      import { createDemo3DThreeGroup } from "../dist/three/index.js";
+
+      const input = document.querySelector("#demo3d-file");
+      const fitMain = document.querySelector("#fit-main");
+      const fitAll = document.querySelector("#fit-all");
+      const status = document.querySelector("#status");
+      const canvas = document.querySelector("#viewport");
+
+      window.__demo3dRenderResult = { status: "idle" };
+      let currentRender = null;
+
+      fitMain.addEventListener("click", () => fitCurrentScene("main"));
+      fitAll.addEventListener("click", () => fitCurrentScene("all"));
+
+      input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        if (!file) {
+          return;
+        }
+
+        window.__demo3dRenderResult = { status: "parsing" };
+        status.value = "Parsing...";
+
+        try {
+          const parsed = await parseDemo3D(await file.arrayBuffer());
+          status.value = "Creating Three objects...";
+          const group = await createDemo3DThreeGroup(parsed, { three: THREE });
+
+          status.value = "Rendering...";
+          const scene = new THREE.Scene();
+          scene.background = new THREE.Color(0xf1f3f4);
+          scene.add(group);
+          scene.add(new THREE.HemisphereLight(0xffffff, 0x606060, 2.5));
+          const directional = new THREE.DirectionalLight(0xffffff, 1.4);
+          directional.position.set(50, 80, 40);
+          scene.add(directional);
+
+          const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+          renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+
+          const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 100000);
+          const center = frameCamera(camera, group, "main");
+
+          const controls = new OrbitControls(camera, canvas);
+          controls.target.copy(center);
+          controls.update();
+          controls.addEventListener("change", () => renderer.render(scene, camera));
+
+          currentRender = { camera, controls, group, renderer, scene };
+          fitMain.disabled = false;
+          fitAll.disabled = false;
+          window.addEventListener("resize", resizeCurrentRenderer);
+
+          renderer.render(scene, camera);
+
+          const stats = group.userData.demo3d.stats;
+          window.__demo3dRenderResult = {
+            status: "rendered",
+            stats,
+            warnings: group.userData.demo3d.warnings.length
+          };
+          status.value = `Rendered ${stats.meshes} meshes (${stats.serializedRenderables} placed renderables).`;
+        } catch (error) {
+          window.__demo3dRenderResult = {
+            status: "error",
+            message: error instanceof Error ? error.message : String(error)
+          };
+          status.value = "Render failed.";
+          throw error;
+        }
+      });
+
+      function fitCurrentScene(mode) {
+        if (!currentRender) {
+          return;
+        }
+
+        const center = frameCamera(currentRender.camera, currentRender.group, mode);
+        currentRender.controls.target.copy(center);
+        currentRender.controls.update();
+        currentRender.renderer.render(currentRender.scene, currentRender.camera);
+      }
+
+      function resizeCurrentRenderer() {
+        if (!currentRender) {
+          return;
+        }
+
+        const { camera, renderer, scene } = currentRender;
+        renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+        camera.aspect = canvas.clientWidth / canvas.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.render(scene, camera);
+      }
+
+      function frameCamera(camera, object, mode) {
+        const box = mode === "all" ? new THREE.Box3().setFromObject(object) : computeTrimmedBounds(object);
+        if (box.isEmpty()) {
+          camera.position.set(10, 10, 10);
+          camera.lookAt(0, 0, 0);
+          return new THREE.Vector3(0, 0, 0);
+        }
+
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const radius = Math.max(size.x, size.y, size.z, 1);
+        camera.position.copy(center).add(new THREE.Vector3(radius * 0.9, radius * 0.7, radius * 1.1));
+        camera.near = Math.max(radius / 10000, 0.01);
+        camera.far = radius * 20;
+        camera.updateProjectionMatrix();
+        camera.lookAt(center);
+        return center;
+      }
+
+      function computeTrimmedBounds(object) {
+        const meshBounds = [];
+        object.updateWorldMatrix(true, true);
+        object.traverse((child) => {
+          if (!child.isMesh || !child.geometry) {
+            return;
+          }
+
+          const bounds = new THREE.Box3().setFromObject(child);
+          if (!bounds.isEmpty()) {
+            meshBounds.push({ bounds, center: bounds.getCenter(new THREE.Vector3()) });
+          }
+        });
+
+        if (meshBounds.length < 20) {
+          return new THREE.Box3().setFromObject(object);
+        }
+
+        const x = percentileRange(meshBounds.map((item) => item.center.x));
+        const y = percentileRange(meshBounds.map((item) => item.center.y));
+        const z = percentileRange(meshBounds.map((item) => item.center.z));
+        const trimmed = new THREE.Box3();
+        let included = 0;
+
+        for (const item of meshBounds) {
+          if (
+            item.center.x >= x.min &&
+            item.center.x <= x.max &&
+            item.center.y >= y.min &&
+            item.center.y <= y.max &&
+            item.center.z >= z.min &&
+            item.center.z <= z.max
+          ) {
+            trimmed.union(item.bounds);
+            included += 1;
+          }
+        }
+
+        return included > 0 ? trimmed : new THREE.Box3().setFromObject(object);
+      }
+
+      function percentileRange(values) {
+        const sorted = [...values].sort((a, b) => a - b);
+        return {
+          min: sorted[Math.floor((sorted.length - 1) * 0.01)],
+          max: sorted[Math.floor((sorted.length - 1) * 0.99)]
+        };
+      }
+    </script>
+  </body>
+</html>
