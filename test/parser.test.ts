@@ -24,6 +24,7 @@ describe("parseDemo3D", () => {
     expect(parsed.model.visuals).toHaveLength(1);
     expect(parsed.model.visuals[0]?.id).toBe("visual-1");
     expect(parsed.model.visuals[0]?.displayName).toBe("Box 1");
+    expect(parsed.model.visuals[0]?.materials[0]?.textureReference).toBe("texture-1");
     expect(parsed.model.visuals[0]?.localTransform).toEqual([1, 2, 3]);
     expect(parsed.model.visuals[0]?.children).toHaveLength(1);
     expect(parsed.model.unknownTypes.get("Vendor.CustomThing")).toBe(1);

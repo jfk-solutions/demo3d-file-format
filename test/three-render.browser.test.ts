@@ -59,6 +59,10 @@ test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ p
   expect(result.stats.meshes).toBeGreaterThan(0);
   expect(result.stats.geometries).toBeGreaterThan(0);
   expect(result.stats.serializedRenderables).toBeGreaterThan(0);
+  expect(result.stats.textVisuals).toBeGreaterThan(0);
+  expect(result.stats.textures).toBeGreaterThan(0);
+  expect(result.stats.drawingBlocks).toBeGreaterThan(0);
+  expect(result.stats.lines).toBeGreaterThan(0);
 
   const screenshot = await page.locator("#viewport").screenshot();
   expect(screenshot.byteLength).toBeGreaterThan(1_000);
@@ -119,6 +123,10 @@ declare global {
       stats: {
         meshes: number;
         geometries: number;
+        textures: number;
+        textVisuals: number;
+        drawingBlocks: number;
+        lines: number;
         serializedRenderables: number;
       };
       warnings?: number;

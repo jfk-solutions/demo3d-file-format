@@ -122,6 +122,7 @@ export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
         <Material xsi:type="e3d:MeshMaterialProperty">
           <MeshMaterial xsi:type="e3d:MeshMaterial">
             <Diffuse>-16744448</Diffuse>
+            <Texture><Id>texture-1</Id></Texture>
           </MeshMaterial>
         </Material>
         <VendorThing xsi:type="Vendor.CustomThing"><Value xsi:type="xsd:int">42</Value></VendorThing>

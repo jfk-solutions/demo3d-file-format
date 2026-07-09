@@ -22,6 +22,7 @@ export interface Demo3DThreeRendererOptions {
   readonly three?: ThreeModule;
   readonly loadThree?: () => Promise<ThreeModule>;
   readonly showPlaceholders?: boolean;
+  readonly renderText?: boolean;
   readonly includeUnsupported?: boolean;
   readonly includeSerializedRenderables?: boolean;
   readonly maxSerializedRenderables?: number;
@@ -33,8 +34,21 @@ export interface Demo3DThreeStats {
   meshes: number;
   geometries: number;
   materials: number;
+  textures: number;
+  textVisuals: number;
+  drawingBlocks: number;
+  lines: number;
   serializedRenderables: number;
   unsupported: number;
+}
+
+interface Demo3DTextureImage {
+  readonly id: string;
+  readonly name?: string;
+  readonly base64: string;
+  readonly mimeType: string;
+  readonly width?: number;
+  readonly height?: number;
 }
 
 export interface Demo3DThreeScene {
@@ -52,9 +66,13 @@ interface RendererState {
   readonly warnings: Demo3DThreeWarning[];
   readonly meshById: Map<string, Demo3DMesh>;
   readonly serializedObjectById: Map<string, Demo3DXmlElement>;
+  readonly textureImageById: Map<string, Demo3DTextureImage>;
+  readonly drawingBlockById: Map<string, Demo3DXmlElement>;
   readonly geometryCache: Map<string, Three.BufferGeometry>;
   readonly primitiveGeometryCache: Map<string, Three.BufferGeometry>;
+  readonly lineGeometryCache: Map<string, Three.BufferGeometry>;
   readonly materialCache: Map<string, Three.Material>;
+  readonly textureCache: Map<string, Three.Texture>;
   readonly defaultMaterial: Three.Material;
   readonly stats: Demo3DThreeStats;
 }
@@ -210,15 +228,23 @@ function createState(
     warnings: [],
     meshById: new Map(project.meshes.flatMap((mesh) => (mesh.id ? [[mesh.id, mesh] as const] : []))),
     serializedObjectById: indexSerializedObjects(project),
+    textureImageById: indexTextureImages(project),
+    drawingBlockById: indexDrawingBlocks(project),
     geometryCache: new Map(),
     primitiveGeometryCache: new Map(),
+    lineGeometryCache: new Map(),
     materialCache: new Map(),
+    textureCache: new Map(),
     defaultMaterial: createDemo3DThreeMaterial(undefined, three),
     stats: {
       groups: 0,
       meshes: 0,
       geometries: 0,
       materials: 1,
+      textures: 0,
+      textVisuals: 0,
+      drawingBlocks: 0,
+      lines: 0,
       serializedRenderables: 0,
       unsupported: 0
     }
@@ -228,6 +254,19 @@ function createState(
 function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.Object3D {
   const refs = findMeshReferenceIds(visual.xml);
   const meshes: Three.Object3D[] = [];
+  const textObjects: Three.Object3D[] = [];
+  const drawingBlockObjects: Three.Object3D[] = [];
+  const textObject = createTextVisualObject(visual, state);
+  if (textObject) {
+    textObjects.push(textObject);
+    meshes.push(textObject);
+  }
+  const drawingBlockObject = createDrawingBlockVisualObject(visual, state);
+  if (drawingBlockObject) {
+    drawingBlockObjects.push(drawingBlockObject);
+    meshes.push(drawingBlockObject);
+  }
+
   for (const ref of refs) {
     const mesh = createMeshObject(ref, visual, visual.materials[0], state);
     if (mesh) {
@@ -239,7 +278,13 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
 
   let object: Three.Object3D;
 
-  if (meshes.length === 1 && visual.children.length === 0 && aspectRenderableObjects.length === 0) {
+  if (
+    meshes.length === 1 &&
+    visual.children.length === 0 &&
+    aspectRenderableObjects.length === 0 &&
+    textObjects.length === 0 &&
+    drawingBlockObjects.length === 0
+  ) {
     object = meshes[0];
   } else {
     const group = new state.three.Group();
@@ -309,6 +354,117 @@ function createAspectRenderableObjects(visual: Demo3DVisual, state: RendererStat
   return objects;
 }
 
+function createTextVisualObject(visual: Demo3DVisual, state: RendererState): Three.Mesh | undefined {
+  if (state.options.renderText === false || visual.typeName !== "e3d:TextVisual") {
+    return undefined;
+  }
+
+  const properties = visual.properties;
+  if (!properties) {
+    return undefined;
+  }
+
+  const text = properties?.textOf("Text");
+  if (!text) {
+    return undefined;
+  }
+
+  const material = firstMaterial(visual.xml);
+  const color = demo3dColorToHex(material?.diffuse ?? -1);
+  const lineHeight = numberChild(properties, "LineHeight", 0.05);
+  const bold = properties?.textOf("Bold") === "1" || properties?.textOf("Bold")?.toLowerCase() === "true";
+  const textMesh = canUseCanvas()
+    ? createCanvasTextMesh(text, lineHeight, color, bold, state)
+    : createFallbackTextMesh(text, lineHeight, material, state);
+
+  textMesh.name = visual.displayName ?? text;
+  textMesh.userData.demo3d = {
+    kind: "text",
+    id: visual.id,
+    text,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    lineHeight,
+    fontFamily: properties?.textOf("FontFamily"),
+    horizontalAlign: properties?.textOf("HorizontalAlign"),
+    verticalAlign: properties?.textOf("VerticalAlign")
+  };
+  state.stats.meshes += 1;
+  state.stats.textVisuals += 1;
+  return textMesh;
+}
+
+function createDrawingBlockVisualObject(visual: Demo3DVisual, state: RendererState): Three.Object3D | undefined {
+  if (visual.typeName !== "e3d:PrimitivesVisual") {
+    return undefined;
+  }
+
+  const blockId = visual.properties?.textOf("DrawingBlockRef");
+  if (!blockId) {
+    return undefined;
+  }
+
+  const geometry = getDrawingBlockGeometry(blockId, state);
+  if (!geometry) {
+    return undefined;
+  }
+
+  const material = getLineMaterial(firstMaterial(visual.xml) ?? visual.materials[0], state);
+  const object = new state.three.LineSegments(geometry, material);
+  object.name = visual.displayName ?? blockId;
+  object.userData.demo3d = {
+    kind: "drawing-block",
+    id: visual.id,
+    blockId,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path
+  };
+  state.stats.drawingBlocks += 1;
+  state.stats.lines += geometry.getAttribute("position").count / 2;
+  return object;
+}
+
+function getDrawingBlockGeometry(blockId: string, state: RendererState): Three.BufferGeometry | undefined {
+  const cached = state.lineGeometryCache.get(blockId);
+  if (cached) {
+    return cached;
+  }
+
+  const block = state.drawingBlockById.get(blockId);
+  const brep = block?.child("BREP");
+  if (!brep) {
+    return undefined;
+  }
+
+  const positions: number[] = [];
+  for (const entity of brep.children) {
+    const points = parseBrepPoints(entity.textOf("C"));
+    if (points.length < 2) {
+      continue;
+    }
+
+    if (entity.xsiType === "Demo3D.BREP.Line") {
+      pushLineSegment(positions, points[0], points[1]);
+    } else if (entity.xsiType === "Demo3D.BREP.Curve") {
+      for (let index = 1; index < points.length; index += 1) {
+        pushLineSegment(positions, points[index - 1], points[index]);
+      }
+    }
+  }
+
+  if (positions.length === 0) {
+    return undefined;
+  }
+
+  const geometry = new state.three.BufferGeometry();
+  geometry.setAttribute("position", new state.three.BufferAttribute(new Float32Array(positions), 3));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.lineGeometryCache.set(blockId, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
 function createMeshObject(
   meshId: string,
   source: Demo3DVisual | Demo3DXmlElement,
@@ -328,7 +484,7 @@ function createMeshObject(
       sourceType,
       xmlPath
     });
-    return undefined;
+    return state.options.showPlaceholders ? createPlaceholderMesh(sourceId ?? meshId, state) : undefined;
   }
 
   const geometry = getGeometry(mesh, state);
@@ -475,16 +631,147 @@ function getMaterial(material: Demo3DMaterial | undefined, state: RendererState)
     return state.defaultMaterial;
   }
 
-  const key = String(material.diffuse ?? "default");
+  const textureReference = material.textureReference;
+  const key = `${String(material.diffuse ?? "default")}:${textureReference ?? ""}`;
   const cached = state.materialCache.get(key);
   if (cached) {
     return cached;
   }
 
   const created = createDemo3DThreeMaterial(material, state.three);
+  const texture = textureReference ? getTexture(textureReference, state) : undefined;
+  if (texture && "map" in created) {
+    (created as Three.MeshStandardMaterial).map = texture;
+    created.needsUpdate = true;
+  }
   state.materialCache.set(key, created);
   state.stats.materials += 1;
   return created;
+}
+
+function getTexture(textureReference: string, state: RendererState): Three.Texture | undefined {
+  const cached = state.textureCache.get(textureReference);
+  if (cached) {
+    return cached;
+  }
+
+  const image = state.textureImageById.get(textureReference);
+  if (!image || typeof state.three.TextureLoader !== "function" || typeof document !== "object") {
+    return undefined;
+  }
+
+  const texture = new state.three.TextureLoader().load(`data:${image.mimeType};base64,${image.base64}`);
+  if ("SRGBColorSpace" in state.three) {
+    texture.colorSpace = state.three.SRGBColorSpace;
+  }
+  texture.name = image.name ?? image.id;
+  texture.flipY = false;
+  state.textureCache.set(textureReference, texture);
+  state.stats.textures += 1;
+  return texture;
+}
+
+function createCanvasTextMesh(
+  text: string,
+  lineHeight: number,
+  color: number,
+  bold: boolean,
+  state: RendererState
+): Three.Mesh {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return createFallbackTextMesh(text, lineHeight, undefined, state);
+  }
+
+  const fontSize = 64;
+  const padding = 12;
+  context.font = `${bold ? "700 " : ""}${fontSize}px sans-serif`;
+  const metrics = context.measureText(text);
+  canvas.width = Math.max(16, Math.ceil(metrics.width + padding * 2));
+  canvas.height = fontSize + padding * 2;
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.font = `${bold ? "700 " : ""}${fontSize}px sans-serif`;
+  context.textBaseline = "middle";
+  context.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+  context.fillText(text, padding, canvas.height / 2);
+
+  const texture = new state.three.CanvasTexture(canvas);
+  if ("SRGBColorSpace" in state.three) {
+    texture.colorSpace = state.three.SRGBColorSpace;
+  }
+  texture.needsUpdate = true;
+  state.stats.textures += 1;
+
+  const aspect = canvas.width / canvas.height;
+  const geometry = new state.three.PlaneGeometry(Math.max(lineHeight * aspect, lineHeight), lineHeight);
+  const material = new state.three.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    side: state.three.DoubleSide,
+    depthWrite: false
+  });
+  state.stats.geometries += 1;
+  state.stats.materials += 1;
+  return new state.three.Mesh(geometry, material);
+}
+
+function createFallbackTextMesh(
+  text: string,
+  lineHeight: number,
+  material: Demo3DMaterial | undefined,
+  state: RendererState
+): Three.Mesh {
+  const geometry = new state.three.PlaneGeometry(Math.max(text.length * lineHeight * 0.6, lineHeight), lineHeight);
+  const mesh = new state.three.Mesh(geometry, getMaterial(material, state));
+  state.stats.geometries += 1;
+  return mesh;
+}
+
+function getLineMaterial(material: Demo3DMaterial | undefined, state: RendererState): Three.Material {
+  const color = material?.diffuse === undefined ? 0x202124 : demo3dColorToHex(material.diffuse);
+  const key = `line:${color}`;
+  const cached = state.materialCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const created = new state.three.LineBasicMaterial({ color });
+  state.materialCache.set(key, created);
+  state.stats.materials += 1;
+  return created;
+}
+
+function parseBrepPoints(value: string | undefined): Array<[number, number, number]> {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split("|")
+    .map((point) => point.trim())
+    .filter(Boolean)
+    .map((point) => {
+      const values = point
+        .split(/\s+/)
+        .map((part) => Number.parseFloat(part))
+        .filter((part) => Number.isFinite(part));
+      return values.length >= 3 ? ([values[0], values[1], values[2]] as [number, number, number]) : undefined;
+    })
+    .filter((point): point is [number, number, number] => point !== undefined);
+}
+
+function pushLineSegment(
+  positions: number[],
+  start: readonly [number, number, number],
+  end: readonly [number, number, number]
+): void {
+  positions.push(start[0], start[1], start[2], end[0], end[1], end[2]);
+}
+
+function canUseCanvas(): boolean {
+  return typeof document === "object" && typeof document.createElement === "function";
 }
 
 function indexSerializedObjects(project: Demo3DProject): Map<string, Demo3DXmlElement> {
@@ -500,6 +787,52 @@ function indexSerializedObjects(project: Demo3DProject): Map<string, Demo3DXmlEl
       indexed.set(id, item);
     }
   }
+  return indexed;
+}
+
+function indexTextureImages(project: Demo3DProject): Map<string, Demo3DTextureImage> {
+  const indexed = new Map<string, Demo3DTextureImage>();
+  const textures = project.root.child("TextureLibrary")?.child("Textures");
+  if (!textures) {
+    return indexed;
+  }
+
+  for (const entry of textures.children) {
+    const id = entry.child("key")?.textOf("Id") ?? entry.child("key")?.text;
+    const value = entry.child("val");
+    const bytes = value?.child("Image")?.child("bytes")?.text;
+    if (!id || !bytes) {
+      continue;
+    }
+
+    indexed.set(id, {
+      id,
+      name: value?.textOf("Name"),
+      base64: bytes,
+      mimeType: imageMimeType(bytes),
+      width: numberChildOptional(value, "Width"),
+      height: numberChildOptional(value, "Height")
+    });
+  }
+
+  return indexed;
+}
+
+function indexDrawingBlocks(project: Demo3DProject): Map<string, Demo3DXmlElement> {
+  const indexed = new Map<string, Demo3DXmlElement>();
+  const blocks = project.root.child("DrawingBlockLibrary")?.child("Blocks");
+  if (!blocks) {
+    return indexed;
+  }
+
+  for (const entry of blocks.children) {
+    const id = entry.child("key")?.text;
+    const value = entry.child("val");
+    if (id && value) {
+      indexed.set(id, value);
+    }
+  }
+
   return indexed;
 }
 
@@ -745,6 +1078,32 @@ function numberChild(element: Demo3DXmlElement, localName: string, fallback: num
 
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function numberChildOptional(element: Demo3DXmlElement | undefined, localName: string): number | undefined {
+  const value = element?.textOf(localName);
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function imageMimeType(base64: string): string {
+  if (base64.startsWith("iVBORw0KGgo")) {
+    return "image/png";
+  }
+
+  if (base64.startsWith("/9j/")) {
+    return "image/jpeg";
+  }
+
+  if (base64.startsWith("R0lGOD")) {
+    return "image/gif";
+  }
+
+  return "application/octet-stream";
 }
 
 function degreesToRadians(value: number): number {

@@ -78,7 +78,12 @@ export class Demo3DMaterial extends Demo3DTypedObject {
   }
 
   get textureReference(): string | undefined {
-    return this.xml.child("TextureReference")?.textOf("Id") ?? this.xml.textOf("TextureReference");
+    return (
+      this.xml.child("TextureReference")?.textOf("Id") ??
+      this.xml.child("Texture")?.textOf("Id") ??
+      this.xml.textOf("TextureReference") ??
+      this.xml.textOf("Texture")
+    );
   }
 }
 

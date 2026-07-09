@@ -52,6 +52,37 @@ describe("Three renderer adapter", () => {
     expect(visual.rotation.y).toBeCloseTo(Math.PI / 2);
     expect(renderable.userData.demo3d.aspectType).toBe("e3d:CylinderRendererAspect");
   });
+
+  it("creates renderable objects for TextVisual entries", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: textVisualXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    const visual = group.children[0]!;
+    const text = visual.children[0]!;
+
+    expect(group.userData.demo3d.stats.textVisuals).toBe(1);
+    expect(group.userData.demo3d.stats.meshes).toBe(1);
+    expect(visual.userData.demo3d.kind).toBe("visual");
+    expect(text.userData.demo3d.kind).toBe("text");
+    expect(text.userData.demo3d.text).toBe("Hello Demo3D");
+  });
+
+  it("renders XML DrawingBlock BREP lines for PrimitivesVisual entries", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: drawingBlockXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    const visual = group.children[0]!;
+    const drawing = visual.children[0]!;
+
+    expect(group.userData.demo3d.stats.drawingBlocks).toBe(1);
+    expect(group.userData.demo3d.stats.lines).toBe(1);
+    expect(drawing.type).toBe("LineSegments");
+    expect(drawing.userData.demo3d.blockId).toBe("block-1");
+  });
 });
 
 const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
@@ -88,4 +119,61 @@ const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </Renderables>
     </E>
   </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+const drawingBlockXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <DrawingBlockLibrary>
+    <Blocks>
+      <e xsi:type="e3d:DictionaryEntry">
+        <key xsi:type="e3d:DrawingBlockReference">block-1</key>
+        <val xsi:type="e3d:DB">
+          <Name>block-1</Name>
+          <BREP>
+            <E xsi:type="Demo3D.BREP.Line">
+              <C>0 0 0|1 0 0|</C>
+            </E>
+          </BREP>
+        </val>
+      </e>
+    </Blocks>
+  </DrawingBlockLibrary>
+  <C>
+    <e xsi:type="e3d:PrimitivesVisual">
+      <Id>primitive-1</Id>
+      <N>Primitive</N>
+      <P xsi:type="e3d:DrawingBlockProperties">
+        <DrawingBlockRef>block-1</DrawingBlockRef>
+        <Materials>
+          <MeshMaterials>
+            <e xsi:type="e3d:MeshMaterial">
+              <Diffuse>-16777216</Diffuse>
+            </e>
+          </MeshMaterials>
+        </Materials>
+      </P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+const textVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:TextVisual">
+      <Id>text-visual-1</Id>
+      <N>Label</N>
+      <LR>1|2|3|1.5707963267948966||</LR>
+      <P xsi:type="e3d:TextProperties">
+        <Bold>1</Bold>
+        <FontFamily>sans-serif</FontFamily>
+        <HorizontalAlign>Left</HorizontalAlign>
+        <LineHeight>0.05</LineHeight>
+        <Material>
+          <MeshMaterial xsi:type="e3d:MeshMaterial">
+            <Diffuse>-1</Diffuse>
+          </MeshMaterial>
+        </Material>
+        <Text>Hello Demo3D</Text>
+        <VerticalAlign>Center</VerticalAlign>
+      </P>
+    </e>
+  </C>
 </e3d:Demo3DProject>`;

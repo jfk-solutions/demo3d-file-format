@@ -125,7 +125,9 @@
             stats,
             warnings: group.userData.demo3d.warnings.length
           };
-          status.value = `Rendered ${stats.meshes} meshes (${stats.serializedRenderables} placed renderables).`;
+          status.value =
+            `Rendered ${stats.meshes} meshes (${stats.serializedRenderables} placed renderables, ` +
+            `${stats.textVisuals} text visuals).`;
         } catch (error) {
           window.__demo3dRenderResult = {
             status: "error",
