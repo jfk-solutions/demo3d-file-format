@@ -4,6 +4,7 @@ import {
   Demo3DMesh,
   Demo3DPackage,
   Demo3DProject,
+  Demo3DResource,
   Demo3DVisual
 } from "../model.js";
 import { Demo3DBinaryBlock, Demo3DXmlElement } from "../xml.js";
@@ -38,6 +39,9 @@ export interface Demo3DThreeStats {
   textVisuals: number;
   drawingBlocks: number;
   lines: number;
+  directVisuals: number;
+  imageVisuals: number;
+  lights: number;
   serializedRenderables: number;
   unsupported: number;
 }
@@ -68,6 +72,7 @@ interface RendererState {
   readonly serializedObjectById: Map<string, Demo3DXmlElement>;
   readonly textureImageById: Map<string, Demo3DTextureImage>;
   readonly drawingBlockById: Map<string, Demo3DXmlElement>;
+  readonly bufferByName: Map<string, Uint8Array>;
   readonly geometryCache: Map<string, Three.BufferGeometry>;
   readonly primitiveGeometryCache: Map<string, Three.BufferGeometry>;
   readonly lineGeometryCache: Map<string, Three.BufferGeometry>;
@@ -102,7 +107,7 @@ export async function createDemo3DThreeGroup(
 ): Promise<Three.Group> {
   const three = await resolveThree(options);
   const project = parsed instanceof Demo3DPackage ? parsed.model : parsed;
-  const state = createState(three, project, options);
+  const state = createState(three, project, options, parsed instanceof Demo3DPackage ? parsed.buffers : []);
   const root = new three.Group();
   root.name = "Demo3D";
 
@@ -219,7 +224,8 @@ async function resolveThree(options: Demo3DThreeRendererOptions): Promise<ThreeM
 function createState(
   three: ThreeModule,
   project: Demo3DProject,
-  options: Demo3DThreeRendererOptions
+  options: Demo3DThreeRendererOptions,
+  buffers: readonly Demo3DResource[]
 ): RendererState {
   return {
     three,
@@ -230,6 +236,7 @@ function createState(
     serializedObjectById: indexSerializedObjects(project),
     textureImageById: indexTextureImages(project),
     drawingBlockById: indexDrawingBlocks(project),
+    bufferByName: indexBuffers(buffers),
     geometryCache: new Map(),
     primitiveGeometryCache: new Map(),
     lineGeometryCache: new Map(),
@@ -245,6 +252,9 @@ function createState(
       textVisuals: 0,
       drawingBlocks: 0,
       lines: 0,
+      directVisuals: 0,
+      imageVisuals: 0,
+      lights: 0,
       serializedRenderables: 0,
       unsupported: 0
     }
@@ -256,6 +266,7 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
   const meshes: Three.Object3D[] = [];
   const textObjects: Three.Object3D[] = [];
   const drawingBlockObjects: Three.Object3D[] = [];
+  const directVisualObjects: Three.Object3D[] = [];
   const textObject = createTextVisualObject(visual, state);
   if (textObject) {
     textObjects.push(textObject);
@@ -265,6 +276,11 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
   if (drawingBlockObject) {
     drawingBlockObjects.push(drawingBlockObject);
     meshes.push(drawingBlockObject);
+  }
+  const directVisualObject = createDirectVisualObject(visual, state);
+  if (directVisualObject) {
+    directVisualObjects.push(directVisualObject);
+    meshes.push(directVisualObject);
   }
 
   for (const ref of refs) {
@@ -283,7 +299,8 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
     visual.children.length === 0 &&
     aspectRenderableObjects.length === 0 &&
     textObjects.length === 0 &&
-    drawingBlockObjects.length === 0
+    drawingBlockObjects.length === 0 &&
+    directVisualObjects.length === 0
   ) {
     object = meshes[0];
   } else {
@@ -297,6 +314,7 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
 
   object.name = visual.displayName ?? visual.id ?? visual.typeName;
   applyDemo3DTransform(object, visual.xml.textOf("LR"));
+  applyDemo3DScale(object, visual.properties?.textOf("Scale"));
   object.userData.demo3d = {
     kind: "visual",
     id: visual.id,
@@ -424,6 +442,167 @@ function createDrawingBlockVisualObject(visual: Demo3DVisual, state: RendererSta
   return object;
 }
 
+function createDirectVisualObject(visual: Demo3DVisual, state: RendererState): Three.Object3D | undefined {
+  if (!isRenderableVisualVisible(visual)) {
+    return undefined;
+  }
+
+  if (visual.typeName === "e3d:LightVisual") {
+    return createLightObject(visual, state);
+  }
+
+  if (visual.typeName === "e3d:ImportedImageVisual") {
+    return createImportedImageObject(visual, state);
+  }
+
+  const geometry = getDirectVisualGeometry(visual, state);
+  if (!geometry) {
+    return undefined;
+  }
+
+  const object = new state.three.Mesh(geometry, getMaterial(primaryMaterial(visual), state));
+  object.name = visual.displayName ?? visual.id ?? visual.typeName;
+  object.userData.demo3d = {
+    kind: "direct-visual",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path
+  };
+  state.stats.meshes += 1;
+  state.stats.directVisuals += 1;
+  return object;
+}
+
+function createImportedImageObject(visual: Demo3DVisual, state: RendererState): Three.Mesh | undefined {
+  const properties = visual.properties;
+  if (!properties) {
+    return undefined;
+  }
+
+  const width = numberChild(properties, "WidthScale", 1);
+  const height = numberChild(properties, "HeightScale", 1);
+  const geometry = new state.three.PlaneGeometry(width, height);
+  const material = getImageMaterial(primaryMaterial(visual), state);
+  const object = new state.three.Mesh(geometry, material);
+  object.name = visual.displayName ?? visual.id ?? visual.typeName;
+  object.userData.demo3d = {
+    kind: "image",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path
+  };
+  state.stats.geometries += 1;
+  state.stats.meshes += 1;
+  state.stats.imageVisuals += 1;
+  return object;
+}
+
+function createLightObject(visual: Demo3DVisual, state: RendererState): Three.Object3D | undefined {
+  const properties = visual.properties;
+  const color = demo3dColorToHex(numberChildOptional(properties, "Diffuse") ?? -1);
+  const lightType = properties?.textOf("LightType") ?? "Directional";
+  const light =
+    lightType === "Point"
+      ? new state.three.PointLight(color, 1.4)
+      : new state.three.DirectionalLight(color, 1.4);
+  light.name = visual.displayName ?? visual.id ?? visual.typeName;
+  light.userData.demo3d = {
+    kind: "light",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    lightType,
+    xmlPath: visual.xml.path
+  };
+  state.stats.lights += 1;
+  return light;
+}
+
+function getDirectVisualGeometry(visual: Demo3DVisual, state: RendererState): Three.BufferGeometry | undefined {
+  const properties = visual.properties;
+  if (!properties) {
+    return undefined;
+  }
+
+  const key = `direct:${visual.typeName}:${[
+    properties.textOf("Angle") ?? "",
+    properties.textOf("Depth") ?? "",
+    properties.textOf("Height") ?? "",
+    properties.textOf("Length") ?? "",
+    properties.textOf("Radius") ?? "",
+    properties.textOf("StartAngle") ?? "",
+    properties.textOf("Width") ?? ""
+  ].join("|")}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  let geometry: Three.BufferGeometry | undefined;
+  if (visual.typeName === "e3d:BoxVisual" || visual.typeName === "e3d:BoxTubeVisual") {
+    geometry = new state.three.BoxGeometry(
+      numberChild(properties, "Width", 1),
+      numberChild(properties, "Height", 1),
+      numberChild(properties, "Depth", 1)
+    );
+  } else if (visual.typeName === "e3d:CylinderVisual") {
+    geometry = new state.three.CylinderGeometry(
+      numberChild(properties, "Radius", 0.5),
+      numberChild(properties, "Radius", 0.5),
+      numberChild(properties, "Length", 1),
+      32,
+      1,
+      false,
+      degreesToRadians(numberChild(properties, "StartAngle", 0)),
+      degreesToRadians(numberChild(properties, "Angle", 360))
+    );
+  } else if (visual.typeName === "e3d:WedgeVisual") {
+    geometry = createWedgeGeometry(
+      numberChild(properties, "Width", 1),
+      numberChild(properties, "Height", 1),
+      numberChild(properties, "Length", 1),
+      state
+    );
+  }
+
+  if (!geometry) {
+    return undefined;
+  }
+
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
+function createWedgeGeometry(
+  width: number,
+  height: number,
+  length: number,
+  state: RendererState
+): Three.BufferGeometry {
+  const x = width / 2;
+  const y = height / 2;
+  const z = length / 2;
+  const vertices = new Float32Array([
+    -x, -y, -z,
+    x, -y, -z,
+    -x, -y, z,
+    x, -y, z,
+    -x, y, -z,
+    x, y, -z
+  ]);
+  const indices = [0, 1, 2, 1, 3, 2, 0, 4, 1, 1, 4, 5, 0, 2, 4, 1, 5, 3, 2, 3, 4, 3, 5, 4];
+  const geometry = new state.three.BufferGeometry();
+  geometry.setAttribute("position", new state.three.BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function getDrawingBlockGeometry(blockId: string, state: RendererState): Three.BufferGeometry | undefined {
   const cached = state.lineGeometryCache.get(blockId);
   if (cached) {
@@ -432,22 +611,33 @@ function getDrawingBlockGeometry(blockId: string, state: RendererState): Three.B
 
   const block = state.drawingBlockById.get(blockId);
   const brep = block?.child("BREP");
-  if (!brep) {
+  if (!block) {
     return undefined;
   }
 
   const positions: number[] = [];
-  for (const entity of brep.children) {
-    const points = parseBrepPoints(entity.textOf("C"));
-    if (points.length < 2) {
-      continue;
-    }
+  if (brep) {
+    for (const entity of brep.children) {
+      const points = parseBrepPoints(entity.textOf("C"));
+      if (points.length < 2) {
+        continue;
+      }
 
-    if (entity.xsiType === "Demo3D.BREP.Line") {
-      pushLineSegment(positions, points[0], points[1]);
-    } else if (entity.xsiType === "Demo3D.BREP.Curve") {
-      for (let index = 1; index < points.length; index += 1) {
-        pushLineSegment(positions, points[index - 1], points[index]);
+      if (entity.xsiType === "Demo3D.BREP.Line") {
+        pushLineSegment(positions, points[0], points[1]);
+      } else if (entity.xsiType === "Demo3D.BREP.Curve") {
+        for (let index = 1; index < points.length; index += 1) {
+          pushLineSegment(positions, points[index - 1], points[index]);
+        }
+      }
+    }
+  }
+
+  if (positions.length === 0) {
+    for (const name of block.childrenNamed("Name")) {
+      const buffer = state.bufferByName.get(name.text.toLowerCase());
+      if (buffer) {
+        pushFloat32LineSegments(positions, buffer);
       }
     }
   }
@@ -649,6 +839,42 @@ function getMaterial(material: Demo3DMaterial | undefined, state: RendererState)
   return created;
 }
 
+function getImageMaterial(material: Demo3DMaterial | undefined, state: RendererState): Three.Material {
+  const diffuse = material?.diffuse;
+  const textureReference = material?.textureReference;
+  const texture = textureReference ? getTexture(textureReference, state) : undefined;
+  const key = `image:${String(diffuse ?? "default")}:${textureReference ?? ""}`;
+  const cached = state.materialCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const parameters: Three.MeshBasicMaterialParameters = {
+    color: diffuse === undefined ? 0xffffff : demo3dColorToHex(diffuse),
+    transparent: texture !== undefined || demo3dColorToOpacity(diffuse ?? 0xffffffff) < 1,
+    opacity: diffuse === undefined ? 1 : demo3dColorToOpacity(diffuse),
+    side: state.three.DoubleSide
+  };
+  if (texture) {
+    parameters.map = texture;
+  }
+
+  const created = new state.three.MeshBasicMaterial(parameters);
+  state.materialCache.set(key, created);
+  state.stats.materials += 1;
+  return created;
+}
+
+function primaryMaterial(visual: Demo3DVisual): Demo3DMaterial | undefined {
+  const materialNode =
+    visual.properties?.child("Material") ??
+    visual.properties?.child("OuterMaterial") ??
+    visual.properties?.child("SurfaceMaterial") ??
+    visual.properties ??
+    visual.xml;
+  return firstMaterial(materialNode) ?? visual.materials[0];
+}
+
 function getTexture(textureReference: string, state: RendererState): Three.Texture | undefined {
   const cached = state.textureCache.get(textureReference);
   if (cached) {
@@ -770,6 +996,29 @@ function pushLineSegment(
   positions.push(start[0], start[1], start[2], end[0], end[1], end[2]);
 }
 
+function pushFloat32LineSegments(positions: number[], buffer: Uint8Array): void {
+  if (buffer.byteLength < 24) {
+    return;
+  }
+
+  const lineByteLength = Math.floor(buffer.byteLength / 24) * 24;
+  const view = new DataView(buffer.buffer, buffer.byteOffset, lineByteLength);
+  for (let offset = 0; offset < lineByteLength; offset += 24) {
+    const values = [
+      view.getFloat32(offset, true),
+      view.getFloat32(offset + 4, true),
+      view.getFloat32(offset + 8, true),
+      view.getFloat32(offset + 12, true),
+      view.getFloat32(offset + 16, true),
+      view.getFloat32(offset + 20, true)
+    ];
+
+    if (values.every((value) => Number.isFinite(value))) {
+      positions.push(...values);
+    }
+  }
+}
+
 function canUseCanvas(): boolean {
   return typeof document === "object" && typeof document.createElement === "function";
 }
@@ -833,6 +1082,21 @@ function indexDrawingBlocks(project: Demo3DProject): Map<string, Demo3DXmlElemen
     }
   }
 
+  return indexed;
+}
+
+function indexBuffers(buffers: readonly Demo3DResource[]): Map<string, Uint8Array> {
+  const indexed = new Map<string, Uint8Array>();
+  for (const buffer of buffers) {
+    if (!buffer.data) {
+      continue;
+    }
+
+    const name = buffer.path.split("/").pop();
+    if (name) {
+      indexed.set(name.toLowerCase(), buffer.data);
+    }
+  }
   return indexed;
 }
 
@@ -1054,6 +1318,19 @@ function applyDemo3DTransform(object: Three.Object3D, transformText: string | un
   object.rotation.set(values[3] ?? 0, values[4] ?? 0, values[5] ?? 0);
 }
 
+function applyDemo3DScale(object: Three.Object3D, scaleText: string | undefined): void {
+  const values = parsePipeNumbers(scaleText);
+  if (values.length === 0) {
+    return;
+  }
+
+  object.scale.set(
+    object.scale.x * (values[0] ?? 1),
+    object.scale.y * (values[1] ?? 1),
+    object.scale.z * (values[2] ?? 1)
+  );
+}
+
 function parsePipeNumbers(value: string | undefined): Array<number | undefined> {
   if (!value) {
     return [];
@@ -1088,6 +1365,11 @@ function numberChildOptional(element: Demo3DXmlElement | undefined, localName: s
 
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function isRenderableVisualVisible(visual: Demo3DVisual): boolean {
+  const visible = visual.properties?.textOf("Visible");
+  return visible === undefined || !(visible === "0" || visible.toLowerCase() === "false");
 }
 
 function imageMimeType(base64: string): string {

@@ -15,6 +15,7 @@ describe("parseDemo3D", () => {
     expect(parsed.modelEntryName).toBe("fixture.demo3d");
     expect(parsed.thumbnail?.path).toBe("Thumbnail.png");
     expect(parsed.buffers).toHaveLength(1);
+    expect(parsed.buffers[0]?.data).toEqual(new Uint8Array([4, 5, 6]));
     expect(parsed.model.header.product).toBe("Demo3D");
     expect(parsed.model.header.version).toBe("18.3.0.53");
     expect(parsed.model.meshes).toHaveLength(1);

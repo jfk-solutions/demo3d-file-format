@@ -83,6 +83,53 @@ describe("Three renderer adapter", () => {
     expect(drawing.type).toBe("LineSegments");
     expect(drawing.userData.demo3d.blockId).toBe("block-1");
   });
+
+  it("renders buffer-backed DrawingBlock lines from package Buffers_MD entries", async () => {
+    const parsed = await parseDemo3D(
+      createZip([
+        { name: "fixture.demo3d", data: bufferDrawingBlockXmlFixture },
+        { name: "Buffers_MD/buffer-lines", data: float32Bytes([0, 0, 0, 1, 0, 0]) }
+      ]),
+      { parseXml }
+    );
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    const visual = group.children[0]!;
+    const drawing = visual.children[0]!;
+
+    expect(group.userData.demo3d.stats.drawingBlocks).toBe(1);
+    expect(group.userData.demo3d.stats.lines).toBe(1);
+    expect(drawing.type).toBe("LineSegments");
+    expect(drawing.userData.demo3d.blockId).toBe("block-buffer");
+  });
+
+  it("renders direct primitive visual geometry and applies visual scale", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: directVisualXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    const visual = group.children[0]!;
+    const box = visual.children[0]!;
+
+    expect(group.userData.demo3d.stats.directVisuals).toBe(1);
+    expect(box.userData.demo3d.kind).toBe("direct-visual");
+    expect(visual.scale.toArray()).toEqual([2, 3, 4]);
+  });
+
+  it("renders Demo3D light visuals as Three lights", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: lightVisualXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    const visual = group.children[0]!;
+    const light = visual.children[0]!;
+
+    expect(group.userData.demo3d.stats.lights).toBe(1);
+    expect(light.type).toBe("DirectionalLight");
+    expect(light.userData.demo3d.kind).toBe("light");
+  });
 });
 
 const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
@@ -119,6 +166,75 @@ const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </Renderables>
     </E>
   </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+const bufferDrawingBlockXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <DrawingBlockLibrary>
+    <Blocks>
+      <e xsi:type="e3d:DictionaryEntry">
+        <key xsi:type="e3d:DrawingBlockReference">block-buffer</key>
+        <val xsi:type="e3d:DB">
+          <Name>buffer-lines</Name>
+        </val>
+      </e>
+    </Blocks>
+  </DrawingBlockLibrary>
+  <C>
+    <e xsi:type="e3d:PrimitivesVisual">
+      <Id>primitive-buffer</Id>
+      <N>Primitive Buffer</N>
+      <P xsi:type="e3d:DrawingBlockProperties">
+        <DrawingBlockRef>block-buffer</DrawingBlockRef>
+        <Materials>
+          <MeshMaterials>
+            <e xsi:type="e3d:MeshMaterial">
+              <Diffuse>-16777216</Diffuse>
+            </e>
+          </MeshMaterials>
+        </Materials>
+      </P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+function float32Bytes(values: readonly number[]): Uint8Array {
+  const bytes = new Uint8Array(values.length * 4);
+  const view = new DataView(bytes.buffer);
+  values.forEach((value, index) => view.setFloat32(index * 4, value, true));
+  return bytes;
+}
+
+const directVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:BoxVisual">
+      <Id>box-visual</Id>
+      <N>Box</N>
+      <P xsi:type="e3d:BoxProperties">
+        <Width>1</Width>
+        <Height>2</Height>
+        <Depth>3</Depth>
+        <Scale>2|3|4</Scale>
+        <Material>
+          <MeshMaterial xsi:type="e3d:MeshMaterial">
+            <Diffuse>-16777216</Diffuse>
+          </MeshMaterial>
+        </Material>
+      </P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+const lightVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:LightVisual">
+      <Id>light-visual</Id>
+      <N>Light</N>
+      <P xsi:type="e3d:LightProperties">
+        <Diffuse>-1</Diffuse>
+        <LightType>Directional</LightType>
+      </P>
+    </e>
+  </C>
 </e3d:Demo3DProject>`;
 
 const drawingBlockXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

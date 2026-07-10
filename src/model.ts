@@ -136,7 +136,11 @@ export class Demo3DVisual extends Demo3DTypedObject {
 }
 
 export class Demo3DResource {
-  constructor(public readonly path: string, public readonly entry: ZipEntryInfo) {}
+  constructor(
+    public readonly path: string,
+    public readonly entry: ZipEntryInfo,
+    public readonly data?: Uint8Array
+  ) {}
 }
 
 export class Demo3DProject {

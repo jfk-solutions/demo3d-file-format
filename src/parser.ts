@@ -18,12 +18,14 @@ export async function parseDemo3D(input: Demo3DInput, options: ParseDemo3DOption
   const document = parseXml(modelXml);
   const root = xmlDocumentToElement(document);
   const model = extractProject(root);
-  const resources = archive.entries
-    .filter((entry) => isResourceEntry(entry.name))
-    .map((entry) => new Demo3DResource(entry.name, toEntryInfo(entry)));
-  const buffers = archive.entries
-    .filter((entry) => entry.name.toLowerCase().startsWith("buffers_md/"))
-    .map((entry) => new Demo3DResource(entry.name, toEntryInfo(entry)));
+  const resources = await Promise.all(
+    archive.entries.filter((entry) => isResourceEntry(entry.name)).map((entry) => toResource(entry))
+  );
+  const buffers = await Promise.all(
+    archive.entries
+      .filter((entry) => entry.name.toLowerCase().startsWith("buffers_md/"))
+      .map((entry) => toResource(entry))
+  );
   const thumbnailEntry = archive.entries.find((entry) => entry.name.toLowerCase() === "thumbnail.png");
 
   return new Demo3DPackage(
@@ -31,7 +33,7 @@ export async function parseDemo3D(input: Demo3DInput, options: ParseDemo3DOption
     modelEntry.name,
     modelXml,
     model,
-    thumbnailEntry ? new Demo3DResource(thumbnailEntry.name, toEntryInfo(thumbnailEntry)) : undefined,
+    thumbnailEntry ? await toResource(thumbnailEntry) : undefined,
     resources,
     buffers
   );
@@ -76,4 +78,8 @@ function toEntryInfo(entry: ZipEntryInfo): ZipEntryInfo {
     flags: entry.flags,
     crc32: entry.crc32
   };
+}
+
+async function toResource(entry: ZipEntry): Promise<Demo3DResource> {
+  return new Demo3DResource(entry.name, toEntryInfo(entry), await entry.arrayBuffer());
 }
