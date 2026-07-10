@@ -26,7 +26,14 @@ console.log(parsed.model.visuals.length);
 
 Runtime code has no production dependencies and uses browser APIs only. ZIP method `8` entries are decompressed with `DecompressionStream("deflate-raw")`.
 
-When parsing outside the browser, pass `parseXml` if `DOMParser` is not available.
+The default single-pass XML parser builds the Demo3D object tree directly, avoiding the time and memory cost of an intermediate browser DOM. For unusual XML inputs, callers can opt into the browser parser or inject another DOM implementation:
+
+```ts
+await parseDemo3D(bytes, { xmlParser: "dom" });
+await parseDemo3D(bytes, { parseXml: customParseXml });
+```
+
+The fast parser supports the XML constructs used by Demo3D files but intentionally rejects document type declarations.
 
 ## Three Renderer Demo
 
@@ -37,6 +44,58 @@ npm run demo:three
 ```
 
 Then open the printed `http://127.0.0.1:.../examples/three-render-smoke.html` URL and choose a `.demo3d` file.
+
+The parser root remains independent of Three.js. Renderer features that require
+procedural reconstruction are opt-in through the `demo3d-file-format/three`
+subpath:
+
+```ts
+import { createDemo3DThreeGroup } from "demo3d-file-format/three";
+
+const group = await createDemo3DThreeGroup(parsed, {
+  renderProceduralBelts: true
+});
+```
+
+`renderProceduralBelts` reconstructs `StraightBeltConveyor` surfaces from their
+serialized dimensions, cap types, and surface/side materials. It defaults to
+`false`.
+
+### WebGPU With WebGL Fallback
+
+Tools can lazily select a canvas renderer before creating the Demo3D scene. The
+factory probes for a WebGPU adapter and imports `three/webgpu` only when one is
+available. Otherwise, or when WebGPU initialization fails, it falls back to
+WebGL:
+
+```ts
+import {
+  createDemo3DThreeGroup,
+  createDemo3DThreeRenderer
+} from "demo3d-file-format/three";
+
+const selected = await createDemo3DThreeRenderer({
+  canvas,
+  antialias: true,
+  powerPreference: "high-performance"
+});
+const group = await createDemo3DThreeGroup(parsed, {
+  three: selected.three
+});
+const scene = new selected.three.Scene();
+scene.add(group);
+const camera = new selected.three.PerspectiveCamera(45, width / height, 0.1, 100000);
+
+selected.renderer.render(scene, camera);
+console.log(selected.backend); // "webgpu" or "webgl"
+```
+
+Always pass `selected.three` into the scene adapter so WebGPU materials and
+lights come from the same Three.js module as the renderer. Set
+`preferWebGPU: false` to force the existing `WebGLRenderer` path.
+
+WebGPU can improve repeated rendering of complex scenes, but it does not speed
+up archive/XML parsing and may have higher first-frame shader compilation cost.
 
 ## Current Scope
 

@@ -132,7 +132,7 @@ export class Demo3DVisual extends Demo3DTypedObject {
     this.localTransform = numberArrayValue(xml.valueOf("LR"));
     this.initialLocalTransform = numberArrayValue(xml.valueOf("ILR"));
     this.properties = xml.child("P");
-    this.materials = findDescendants(xml, (node) => node.xsiType === "e3d:MeshMaterial")
+    this.materials = findVisualMaterials(xml)
       .map((node) => new Demo3DMaterial(node.xsiType ?? "e3d:MeshMaterial", node));
   }
 }
@@ -234,9 +234,10 @@ function collectTypedObjects(root: Demo3DXmlElement): Demo3DTypedObject[] {
 
 function extractMeshes(root: Demo3DXmlElement): Demo3DMesh[] {
   const meshes: Demo3DMesh[] = [];
-  const entries = findDescendants(root, (node) => node.xsiType === "e3d:DictionaryEntry");
+  const entries = root.child("MeshLibrary")?.child("Meshes")?.children;
+  const candidates = entries ?? findDescendants(root, (node) => node.xsiType === "e3d:DictionaryEntry");
 
-  for (const entry of entries) {
+  for (const entry of candidates) {
     const value = entry.child("val");
     if (value?.xsiType !== "e3d:Mesh") {
       continue;
@@ -247,6 +248,26 @@ function extractMeshes(root: Demo3DXmlElement): Demo3DMesh[] {
   }
 
   return meshes;
+}
+
+function findVisualMaterials(root: Demo3DXmlElement): Demo3DXmlElement[] {
+  const found: Demo3DXmlElement[] = [];
+  const stack = root.children.filter((child) => child.localName !== "C");
+
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) {
+      continue;
+    }
+    if (node.xsiType === "e3d:MeshMaterial") {
+      found.push(node);
+    }
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]);
+    }
+  }
+
+  return found;
 }
 
 function extractVisualRoots(root: Demo3DXmlElement): Demo3DVisual[] {

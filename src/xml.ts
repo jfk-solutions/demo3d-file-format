@@ -92,23 +92,35 @@ export function xmlDocumentToElement(document: Document): Demo3DXmlElement {
 }
 
 function xmlElementToObject(element: Element, path: string): Demo3DXmlElement {
-  const attributes = Array.from(element.attributes ?? []).map((attribute) => ({
-    name: attribute.name,
-    localName: attribute.localName || attribute.name,
-    prefix: attribute.prefix,
-    namespaceUri: attribute.namespaceURI,
-    value: attribute.value
-  }));
+  const attributes: Demo3DXmlAttribute[] = [];
+  const sourceAttributes = element.attributes;
+  for (let index = 0; index < sourceAttributes.length; index += 1) {
+    const attribute = sourceAttributes.item(index);
+    if (!attribute) {
+      continue;
+    }
+    attributes.push({
+      name: attribute.name,
+      localName: attribute.localName || attribute.name,
+      prefix: attribute.prefix,
+      namespaceUri: attribute.namespaceURI,
+      value: attribute.value
+    });
+  }
 
-  const children = Array.from(element.childNodes)
-    .filter((node): node is Element => node.nodeType === 1)
-    .map((child, index) => xmlElementToObject(child, `${path}/${child.localName || child.nodeName}[${index}]`));
-
-  const text = Array.from(element.childNodes)
-    .filter((node) => node.nodeType === 3 || node.nodeType === 4)
-    .map((node) => node.nodeValue ?? "")
-    .join("")
-    .trim();
+  const children: Demo3DXmlElement[] = [];
+  let text = "";
+  for (let node = element.firstChild; node; node = node.nextSibling) {
+    if (node.nodeType === 1) {
+      const child = node as Element;
+      children.push(
+        xmlElementToObject(child, `${path}/${child.localName || child.nodeName}[${children.length}]`)
+      );
+    } else if (node.nodeType === 3 || node.nodeType === 4) {
+      text += node.nodeValue ?? "";
+    }
+  }
+  text = text.trim();
 
   const xsiType = element.getAttributeNS(XSI_NAMESPACE, "type") ?? element.getAttribute("xsi:type");
   const localName = element.localName || element.nodeName;
@@ -123,11 +135,11 @@ function xmlElementToObject(element: Element, path: string): Demo3DXmlElement {
     children,
     text,
     xsiType,
-    coerceValue(localName, xsiType, text, children.length)
+    coerceDemo3DXmlValue(localName, xsiType, text, children.length)
   );
 }
 
-function coerceValue(
+export function coerceDemo3DXmlValue(
   localName: string,
   xsiType: string | null,
   text: string,

@@ -124,6 +124,31 @@ describe("Three renderer adapter", () => {
     expect(visual.scale.toArray()).toEqual([2, 3, 4]);
   });
 
+  it("renders procedural straight belts only when explicitly enabled", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: straightBeltXmlFixture }]), {
+      parseXml
+    });
+
+    const disabled = await createDemo3DThreeGroup(parsed, { three });
+    const enabled = await createDemo3DThreeGroup(parsed, { three, renderProceduralBelts: true });
+    const visual = enabled.children[0]!;
+    const belt = visual.children[0] as three.Mesh;
+    belt.geometry.computeBoundingBox();
+
+    expect(disabled.userData.demo3d.stats.proceduralBelts).toBe(0);
+    expect(enabled.userData.demo3d.stats.proceduralBelts).toBe(1);
+    expect(belt.userData.demo3d.kind).toBe("procedural-belt");
+    expect(belt.geometry.boundingBox?.min.x).toBeCloseTo(0);
+    expect(belt.geometry.boundingBox?.min.y).toBeCloseTo(-0.1);
+    expect(belt.geometry.boundingBox?.min.z).toBeCloseTo(-0.25);
+    expect(belt.geometry.boundingBox?.max.x).toBeCloseTo(2);
+    expect(belt.geometry.boundingBox?.max.y).toBeCloseTo(0);
+    expect(belt.geometry.boundingBox?.max.z).toBeCloseTo(0.25);
+    expect((belt.material as three.Material[]).length).toBe(2);
+    expect(((belt.material as three.Material[])[0] as three.MeshStandardMaterial).color.getHex()).toBe(0x808080);
+    expect(((belt.material as three.Material[])[1] as three.MeshStandardMaterial).color.getHex()).toBe(0xc0c0c0);
+  });
+
   it("renders Demo3D light visuals as Three lights", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: lightVisualXmlFixture }]), {
       parseXml
@@ -265,6 +290,29 @@ const lightVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2
       <P xsi:type="e3d:LightProperties">
         <Diffuse>-1</Diffuse>
         <LightType>Directional</LightType>
+      </P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+const straightBeltXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:StraightBeltConveyor">
+      <Id>belt-visual</Id>
+      <N>Belt</N>
+      <P xsi:type="e3d:StraightBeltConveyorProperties">
+        <BeltLength>2</BeltLength>
+        <BeltWidth>0.5</BeltWidth>
+        <BeltDiameter>0.1</BeltDiameter>
+        <BeltCenterHeight>0.1</BeltCenterHeight>
+        <BeltCapStart>Box</BeltCapStart>
+        <BeltCapEnd>Box</BeltCapEnd>
+        <SurfaceMaterial>
+          <MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-8355712</Diffuse></MeshMaterial>
+        </SurfaceMaterial>
+        <SurfaceSideMaterial>
+          <MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-4144960</Diffuse></MeshMaterial>
+        </SurfaceSideMaterial>
       </P>
     </e>
   </C>

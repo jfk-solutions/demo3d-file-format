@@ -147,7 +147,10 @@ export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
         <VendorThing xsi:type="Vendor.CustomThing"><Value xsi:type="xsd:int">42</Value></VendorThing>
       </P>
       <C>
-        <e xsi:type="e3d:SphereVisual"><Id>visual-2</Id><N>Child</N></e>
+        <e xsi:type="e3d:SphereVisual">
+          <Id>visual-2</Id><N>Child</N>
+          <P><Material><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-65536</Diffuse></MeshMaterial></Material></P>
+        </e>
       </C>
     </e>
   </C>
