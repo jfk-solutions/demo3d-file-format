@@ -22,9 +22,16 @@ describe("parseDemo3D", () => {
     expect(parsed.model.meshes[0]?.id).toBe("mesh-1");
     expect(parsed.model.meshes[0]?.meshFormat).toBe("TriangleList");
     expect(parsed.model.meshes[0]?.vertices?.toUint8Array().byteLength).toBe(72);
+    expect(parsed.model.layers).toHaveLength(2);
+    expect(parsed.model.layers[0]?.name).toBe("Main");
+    expect(parsed.model.layers[0]?.color).toBe(-65536);
+    expect(parsed.model.layers[0]?.visible).toBe(true);
+    expect(parsed.model.layers[0]?.presets.get("Presentation")).toBe(false);
+    expect(parsed.model.layers[1]?.visible).toBe(false);
     expect(parsed.model.visuals).toHaveLength(1);
     expect(parsed.model.visuals[0]?.id).toBe("visual-1");
     expect(parsed.model.visuals[0]?.displayName).toBe("Box 1");
+    expect(parsed.model.visuals[0]?.layer).toBe("Main");
     expect(parsed.model.visuals[0]?.materials[0]?.textureReference).toBe("texture-1");
     expect(parsed.model.visuals[0]?.localTransform).toEqual([1, 2, 3]);
     expect(parsed.model.visuals[0]?.children).toHaveLength(1);

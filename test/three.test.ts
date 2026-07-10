@@ -37,6 +37,7 @@ describe("Three renderer adapter", () => {
     expect(group.type).toBe("Group");
     expect(group.userData.demo3d.stats.meshes).toBeGreaterThan(0);
     expect(group.userData.demo3d.stats.groups).toBeGreaterThan(0);
+    expect(group.children[0]?.userData.demo3d.layer).toBe("Main");
     expect(JSON.stringify(group.userData.demo3d.warnings)).not.toContain("DEMO3D_THREE_MISSING_MESH");
   });
 

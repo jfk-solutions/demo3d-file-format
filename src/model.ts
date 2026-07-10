@@ -118,6 +118,7 @@ export class Demo3DMesh extends Demo3DTypedObject {
 
 export class Demo3DVisual extends Demo3DTypedObject {
   readonly displayName?: string;
+  readonly layer?: string;
   readonly localTransform?: readonly number[];
   readonly initialLocalTransform?: readonly number[];
   readonly properties?: Demo3DXmlElement;
@@ -127,11 +128,29 @@ export class Demo3DVisual extends Demo3DTypedObject {
   constructor(typeName: string, xml: Demo3DXmlElement) {
     super(typeName, xml);
     this.displayName = xml.textOf("N") ?? xml.textOf("Name");
+    this.layer = xml.child("P")?.textOf("Layer");
     this.localTransform = numberArrayValue(xml.valueOf("LR"));
     this.initialLocalTransform = numberArrayValue(xml.valueOf("ILR"));
     this.properties = xml.child("P");
     this.materials = findDescendants(xml, (node) => node.xsiType === "e3d:MeshMaterial")
       .map((node) => new Demo3DMaterial(node.xsiType ?? "e3d:MeshMaterial", node));
+  }
+}
+
+export class Demo3DLayer extends Demo3DTypedObject {
+  readonly color?: number;
+  readonly visible: boolean;
+  readonly presets: ReadonlyMap<string, boolean>;
+
+  constructor(typeName: string, xml: Demo3DXmlElement, private readonly referenceName?: string) {
+    super(typeName, xml);
+    this.color = numberValue(xml.valueOf("Color"));
+    this.visible = booleanValue(xml.valueOf("Visible"), true);
+    this.presets = extractLayerPresets(xml.child("LayerPresets")?.child("C"));
+  }
+
+  override get name(): string {
+    return super.name ?? this.referenceName ?? "";
   }
 }
 
@@ -148,6 +167,7 @@ export class Demo3DProject {
     public readonly root: Demo3DXmlElement,
     public readonly header: Demo3DHeader,
     public readonly meshes: readonly Demo3DMesh[],
+    public readonly layers: readonly Demo3DLayer[],
     public readonly visuals: readonly Demo3DVisual[],
     public readonly typedObjects: readonly Demo3DTypedObject[],
     public readonly unknownTypes: ReadonlyMap<string, number>
@@ -179,10 +199,33 @@ export function extractProject(root: Demo3DXmlElement): Demo3DProject {
     root,
     Demo3DHeader.fromXml(root),
     extractMeshes(root),
+    extractLayers(root),
     extractVisualRoots(root),
     typedObjects,
     unknownTypes
   );
+}
+
+function extractLayers(root: Demo3DXmlElement): Demo3DLayer[] {
+  const entries = root.child("LayerLibrary")?.child("Layers")?.children ?? [];
+  return entries.flatMap((entry) => {
+    const value = entry.child("val");
+    if (value?.xsiType !== "e3d:Layer") {
+      return [];
+    }
+    return [new Demo3DLayer(value.xsiType, value, entry.child("key")?.text)];
+  });
+}
+
+function extractLayerPresets(container: Demo3DXmlElement | undefined): ReadonlyMap<string, boolean> {
+  const presets = new Map<string, boolean>();
+  for (const entry of container?.children ?? []) {
+    const name = entry.child("key")?.text;
+    if (name) {
+      presets.set(name, booleanValue(entry.child("val")?.value, true));
+    }
+  }
+  return presets;
 }
 
 function collectTypedObjects(root: Demo3DXmlElement): Demo3DTypedObject[] {
@@ -301,6 +344,20 @@ function numberArrayValue(value: Demo3DScalarValue | undefined): readonly number
   return Array.isArray(value) ? value : undefined;
 }
 
+function booleanValue(value: Demo3DScalarValue | undefined, fallback: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string" && value.length > 0) {
+    return !(value === "0" || value.toLowerCase() === "false");
+  }
+  return fallback;
+}
+
 registerDemo3DType("e3d:Visual", Demo3DVisual);
 registerDemo3DType("e3d:Mesh", Demo3DMesh);
 registerDemo3DType("e3d:MeshMaterial", Demo3DMaterial);
+registerDemo3DType("e3d:Layer", Demo3DLayer);

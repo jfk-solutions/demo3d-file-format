@@ -112,12 +112,31 @@ export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
       </e>
     </Meshes>
   </MeshLibrary>
+  <LayerLibrary>
+    <Layers>
+      <e xsi:type="e3d:DictionaryEntry">
+        <key xsi:type="xsd:string">Main</key>
+        <val xsi:type="e3d:Layer">
+          <Color>-65536</Color>
+          <LayerPresets><KT>System.String</KT><VT>System.Boolean</VT><C>
+            <e xsi:type="e3d:DictionaryEntry"><key xsi:type="xsd:string">Presentation</key><val xsi:type="xsd:Boolean">0</val></e>
+          </C></LayerPresets>
+          <Name>Main</Name>
+        </val>
+      </e>
+      <e xsi:type="e3d:DictionaryEntry">
+        <key xsi:type="xsd:string">Hidden</key>
+        <val xsi:type="e3d:Layer"><Name>Hidden</Name><Visible>0</Visible></val>
+      </e>
+    </Layers>
+  </LayerLibrary>
   <C>
     <e xsi:type="e3d:BoxVisual">
       <Id>visual-1</Id>
       <N>Box 1</N>
       <LR>|1|2|3|</LR>
       <P xsi:type="e3d:BoxProperties">
+        <Layer>Main</Layer>
         <Mesh><Id>mesh-1</Id></Mesh>
         <Material xsi:type="e3d:MeshMaterialProperty">
           <MeshMaterial xsi:type="e3d:MeshMaterial">

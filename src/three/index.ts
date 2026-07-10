@@ -264,7 +264,7 @@ function createState(
   };
 }
 
-function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.Object3D {
+function createVisualObject(visual: Demo3DVisual, state: RendererState, inheritedLayer?: string): Three.Object3D {
   const refs = findMeshReferenceIds(visual.xml);
   const meshes: Three.Object3D[] = [];
   const textObjects: Three.Object3D[] = [];
@@ -323,6 +323,7 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
   object.name = visual.displayName ?? visual.id ?? visual.typeName;
   applyDemo3DTransform(object, visual.xml.textOf("LR"));
   applyDemo3DScale(object, visual.properties?.textOf("Scale"));
+  const layer = visual.layer ?? inheritedLayer;
   object.userData.demo3d = {
     kind: "visual",
     id: visual.id,
@@ -330,11 +331,12 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
     typeName: visual.typeName,
     xmlPath: visual.xml.path,
     localTransform: visual.localTransform,
-    localTransformText: visual.xml.textOf("LR")
+    localTransformText: visual.xml.textOf("LR"),
+    layer
   };
 
   for (const child of visual.children) {
-    object.add(createVisualObject(child, state));
+    object.add(createVisualObject(child, state, layer));
   }
 
   return object;

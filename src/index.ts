@@ -3,6 +3,7 @@ export {
   Demo3DPackage,
   Demo3DProject,
   Demo3DHeader,
+  Demo3DLayer,
   Demo3DVisual,
   Demo3DMesh,
   Demo3DMaterial,
