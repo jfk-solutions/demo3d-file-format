@@ -73,7 +73,7 @@ test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ p
   expect(result.stats.dimensions).toBeGreaterThan(0);
   expect(result.stats.imageVisuals).toBeGreaterThan(0);
   expect(result.stats.lights).toBeGreaterThan(0);
-  expect(result.stats.missingGeometryPlaceholders).toBeGreaterThan(0);
+  expect(result.stats.missingGeometryPlaceholders).toBe(0);
 
   const screenshot = await page.locator("#viewport").screenshot();
   expect(screenshot.byteLength).toBeGreaterThan(1_000);

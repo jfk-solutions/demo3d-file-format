@@ -82,6 +82,17 @@ Set `includeUnsupported: true` to receive deduplicated warnings for
 script-generated visual types that contain neither serialized geometry nor the
 dimensions required for an independent reconstruction.
 
+Missing mesh references produce warnings but no invented geometry by default.
+Set `showPlaceholders: true` only for diagnostics; placeholders are fixed-size
+colored cubes and are not part of the Demo3D project. Procedural motor housings
+are also approximate and remain disabled unless `renderProceduralMotors: true`
+is explicitly requested.
+
+Visuals on layers serialized with `Visible` set to `false` are omitted by
+default, including inherited child-layer visibility. Set
+`includeHiddenLayers: true` only when a tool needs to inspect hidden project
+content.
+
 ### WebGPU With WebGL Fallback
 
 Tools can lazily select a canvas renderer before creating the Demo3D scene. The

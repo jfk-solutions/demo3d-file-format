@@ -64,6 +64,25 @@ describe("Three renderer adapter", () => {
     expect(JSON.stringify(group.userData.demo3d.warnings)).not.toContain("DEMO3D_THREE_MISSING_MESH");
   });
 
+  it("respects hidden layers while allowing child layer overrides", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: hiddenLayerXmlFixture }]),
+      { parseXml }
+    );
+    const visibleOnly = await createDemo3DThreeGroup(parsed, { three });
+    const withHidden = await createDemo3DThreeGroup(parsed, { three, includeHiddenLayers: true });
+    const visibleNames: string[] = [];
+    visibleOnly.traverse((object) => {
+      if ((object as three.Mesh).isMesh) {
+        visibleNames.push(object.parent?.name ?? object.name);
+      }
+    });
+
+    expect(visibleOnly.userData.demo3d.stats.meshes).toBe(1);
+    expect(visibleNames).toEqual(["Visible child"]);
+    expect(withHidden.userData.demo3d.stats.meshes).toBe(3);
+  });
+
   it("places serialized renderer aspects through visual AS links", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: aspectLinkedXmlFixture }]), {
       parseXml
@@ -346,12 +365,12 @@ describe("Three renderer adapter", () => {
     expect(light.userData.demo3d.kind).toBe("light");
   });
 
-  it("draws diagnostic placeholders for missing mesh references by default", async () => {
+  it("draws diagnostic placeholders for missing mesh references when explicitly enabled", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: missingMeshXmlFixture }]), {
       parseXml
     });
 
-    const group = await createDemo3DThreeGroup(parsed, { three });
+    const group = await createDemo3DThreeGroup(parsed, { three, showPlaceholders: true });
     const visual = group.children[0]!;
     const placeholder = visual.children[0]!;
 
@@ -361,12 +380,12 @@ describe("Three renderer adapter", () => {
     expect(placeholder.userData.demo3d.meshReferenceId).toBe("missing-mesh");
   });
 
-  it("can suppress missing mesh placeholders for strict geometry-only rendering", async () => {
+  it("suppresses missing mesh placeholders by default", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: missingMeshXmlFixture }]), {
       parseXml
     });
 
-    const group = await createDemo3DThreeGroup(parsed, { three, showPlaceholders: false });
+    const group = await createDemo3DThreeGroup(parsed, { three });
 
     expect(group.userData.demo3d.stats.missingGeometryPlaceholders).toBe(0);
     expect(group.userData.demo3d.stats.unsupported).toBe(1);
@@ -505,6 +524,20 @@ const directVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </P>
     </e>
   </C>
+</e3d:Demo3DProject>`;
+
+const hiddenLayerXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <LayerLibrary><Layers>
+    <e xsi:type="e3d:DictionaryEntry"><key>Hidden</key><val xsi:type="e3d:Layer"><Name>Hidden</Name><Visible>0</Visible></val></e>
+    <e xsi:type="e3d:DictionaryEntry"><key>Visible</key><val xsi:type="e3d:Layer"><Name>Visible</Name></val></e>
+  </Layers></LayerLibrary>
+  <C><e xsi:type="e3d:BoxVisual"><Id>hidden-parent</Id><N>Hidden parent</N>
+    <P xsi:type="e3d:BoxProperties"><Layer>Hidden</Layer><Width>1</Width><Height>1</Height><Depth>1</Depth></P>
+    <C>
+      <e xsi:type="e3d:BoxVisual"><Id>inherited-hidden</Id><N>Inherited hidden</N><P xsi:type="e3d:BoxProperties"><Width>1</Width><Height>1</Height><Depth>1</Depth></P></e>
+      <e xsi:type="e3d:BoxVisual"><Id>visible-child</Id><N>Visible child</N><P xsi:type="e3d:BoxProperties"><Layer>Visible</Layer><Width>1</Width><Height>1</Height><Depth>1</Depth></P></e>
+    </C>
+  </e></C>
 </e3d:Demo3DProject>`;
 
 const lightVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

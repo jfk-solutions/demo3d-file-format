@@ -49,6 +49,7 @@ export interface Demo3DThreeRendererOptions {
   readonly renderProceduralRollers?: boolean;
   readonly renderProceduralMotors?: boolean;
   readonly renderDimensions?: boolean;
+  readonly includeHiddenLayers?: boolean;
   readonly includeUnsupported?: boolean;
   readonly includeSerializedRenderables?: boolean;
   readonly maxSerializedRenderables?: number;
@@ -114,6 +115,7 @@ interface RendererState {
   readonly materialCache: Map<string, Three.Material>;
   readonly textureCache: Map<string, Three.Texture>;
   readonly visualObjectById: Map<string, Three.Object3D>;
+  readonly layerVisibilityByName: ReadonlyMap<string, boolean>;
   readonly renderableObjectTrees: WeakSet<Three.Object3D>;
   readonly warnedGeneratedTypes: Set<string>;
   readonly defaultMaterial: Three.Material;
@@ -292,6 +294,7 @@ function createState(
     materialCache: new Map(),
     textureCache: new Map(),
     visualObjectById: new Map(),
+    layerVisibilityByName: new Map(project.layers.map((layer) => [layer.name, layer.visible])),
     renderableObjectTrees: new WeakSet(),
     warnedGeneratedTypes: new Set(),
     defaultMaterial: createDemo3DThreeMaterial(undefined, three),
@@ -328,23 +331,25 @@ function createVisualObject(
   inheritedLayer?: string,
   parentVisual?: Demo3DVisual
 ): Three.Object3D {
-  const refs = findMeshReferenceIds(visual.xml);
+  const layer = visual.layer ?? inheritedLayer;
+  const renderCurrent = isRenderableVisualVisible(visual) && isLayerVisible(layer, state);
+  const refs = renderCurrent ? findVisualMeshReferenceIds(visual.xml) : [];
   const meshes: Three.Object3D[] = [];
   const textObjects: Three.Object3D[] = [];
   const drawingBlockObjects: Three.Object3D[] = [];
   const directVisualObjects: Three.Object3D[] = [];
   const placeholderObjects: Three.Object3D[] = [];
-  const textObject = createTextVisualObject(visual, state);
+  const textObject = renderCurrent ? createTextVisualObject(visual, state) : undefined;
   if (textObject) {
     textObjects.push(textObject);
     meshes.push(textObject);
   }
-  const drawingBlockObject = createDrawingBlockVisualObject(visual, state);
+  const drawingBlockObject = renderCurrent ? createDrawingBlockVisualObject(visual, state) : undefined;
   if (drawingBlockObject) {
     drawingBlockObjects.push(drawingBlockObject);
     meshes.push(drawingBlockObject);
   }
-  const directVisualObject = createDirectVisualObject(visual, state, parentVisual);
+  const directVisualObject = renderCurrent ? createDirectVisualObject(visual, state, parentVisual) : undefined;
   if (directVisualObject) {
     directVisualObjects.push(directVisualObject);
     meshes.push(directVisualObject);
@@ -359,7 +364,7 @@ function createVisualObject(
       meshes.push(mesh);
     }
   }
-  const aspectRenderableObjects = createAspectRenderableObjects(visual, state);
+  const aspectRenderableObjects = renderCurrent ? createAspectRenderableObjects(visual, state) : [];
   meshes.push(...aspectRenderableObjects);
 
   let object: Three.Object3D;
@@ -386,7 +391,6 @@ function createVisualObject(
   object.name = visual.displayName ?? visual.id ?? visual.typeName;
   applyDemo3DTransform(object, visual.xml.textOf("LR"));
   applyDemo3DScale(object, visual.properties?.textOf("Scale"));
-  const layer = visual.layer ?? inheritedLayer;
   object.userData.demo3d = {
     kind: "visual",
     id: visual.id,
@@ -395,7 +399,8 @@ function createVisualObject(
     xmlPath: visual.xml.path,
     localTransform: visual.localTransform,
     localTransformText: visual.xml.textOf("LR"),
-    layer
+    layer,
+    layerVisible: isLayerVisible(layer, state)
   };
   if (visual.id) {
     state.visualObjectById.set(visual.id, object);
@@ -410,7 +415,9 @@ function createVisualObject(
   if (containsRenderable) {
     state.renderableObjectTrees.add(object);
   }
-  reportUnreconstructedProceduralVisual(visual, containsRenderable, state);
+  if (renderCurrent) {
+    reportUnreconstructedProceduralVisual(visual, containsRenderable, state);
+  }
 
   return object;
 }
@@ -1652,16 +1659,16 @@ function createMeshObject(
       sourceType,
       xmlPath
     });
-    return state.options.showPlaceholders === false
-      ? undefined
-      : createPlaceholderMesh(sourceId ?? meshId, meshId, material, state);
+    return state.options.showPlaceholders === true
+      ? createPlaceholderMesh(sourceId ?? meshId, meshId, material, state)
+      : undefined;
   }
 
   const geometry = getGeometry(mesh, state);
   if (!geometry) {
-    return state.options.showPlaceholders === false
-      ? undefined
-      : createPlaceholderMesh(sourceId ?? meshId, meshId, material, state);
+    return state.options.showPlaceholders === true
+      ? createPlaceholderMesh(sourceId ?? meshId, meshId, material, state)
+      : undefined;
   }
 
   const object = new state.three.Mesh(geometry, getMaterial(material, state));
@@ -2547,6 +2554,19 @@ function findMeshReferenceIds(root: Demo3DXmlElement): string[] {
   return [...ids];
 }
 
+function findVisualMeshReferenceIds(root: Demo3DXmlElement): string[] {
+  const ids = new Set<string>();
+  for (const child of root.children) {
+    if (child.localName === "C") {
+      continue;
+    }
+    for (const id of findMeshReferenceIds(child)) {
+      ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
 function firstMaterial(root: Demo3DXmlElement): Demo3DMaterial | undefined {
   let found: Demo3DMaterial | undefined;
   visit(root, (node) => {
@@ -2728,6 +2748,14 @@ function numberChildOptional(element: Demo3DXmlElement | undefined, localName: s
 function isRenderableVisualVisible(visual: Demo3DVisual): boolean {
   const visible = visual.properties?.textOf("Visible");
   return visible === undefined || !(visible === "0" || visible.toLowerCase() === "false");
+}
+
+function isLayerVisible(layerName: string | undefined, state: RendererState): boolean {
+  return (
+    state.options.includeHiddenLayers === true ||
+    layerName === undefined ||
+    state.layerVisibilityByName.get(layerName) !== false
+  );
 }
 
 function isTrue(value: string | undefined): boolean {
