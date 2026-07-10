@@ -92,7 +92,10 @@
         try {
           const parsed = await parseDemo3D(await file.arrayBuffer());
           status.value = "Creating Three objects...";
-          const group = await createDemo3DThreeGroup(parsed, { three: THREE });
+          const group = await createDemo3DThreeGroup(parsed, {
+            three: THREE,
+            renderProceduralBelts: true
+          });
 
           status.value = "Rendering...";
           const scene = new THREE.Scene();
@@ -133,7 +136,7 @@
           };
           status.value =
             `Rendered ${stats.meshes} meshes (${stats.serializedRenderables} placed renderables, ` +
-            `${stats.materials} materials, ${stats.textures} textures).`;
+            `${stats.proceduralBelts} belts, ${stats.materials} materials, ${stats.textures} textures).`;
         } catch (error) {
           window.__demo3dRenderResult = {
             status: "error",

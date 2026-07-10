@@ -24,6 +24,7 @@ export interface Demo3DThreeRendererOptions {
   readonly loadThree?: () => Promise<ThreeModule>;
   readonly showPlaceholders?: boolean;
   readonly renderText?: boolean;
+  readonly renderProceduralBelts?: boolean;
   readonly includeUnsupported?: boolean;
   readonly includeSerializedRenderables?: boolean;
   readonly maxSerializedRenderables?: number;
@@ -40,6 +41,7 @@ export interface Demo3DThreeStats {
   drawingBlocks: number;
   lines: number;
   directVisuals: number;
+  proceduralBelts: number;
   imageVisuals: number;
   lights: number;
   missingGeometryPlaceholders: number;
@@ -255,6 +257,7 @@ function createState(
       drawingBlocks: 0,
       lines: 0,
       directVisuals: 0,
+      proceduralBelts: 0,
       imageVisuals: 0,
       lights: 0,
       missingGeometryPlaceholders: 0,
@@ -465,6 +468,12 @@ function createDirectVisualObject(visual: Demo3DVisual, state: RendererState): T
     return createImportedImageObject(visual, state);
   }
 
+  if (visual.typeName === "e3d:StraightBeltConveyor") {
+    return state.options.renderProceduralBelts === true
+      ? createStraightBeltConveyorObject(visual, state)
+      : undefined;
+  }
+
   const geometry = getDirectVisualGeometry(visual, state);
   if (!geometry) {
     return undefined;
@@ -482,6 +491,211 @@ function createDirectVisualObject(visual: Demo3DVisual, state: RendererState): T
   state.stats.meshes += 1;
   state.stats.directVisuals += 1;
   return object;
+}
+
+function createStraightBeltConveyorObject(
+  visual: Demo3DVisual,
+  state: RendererState
+): Three.Mesh | undefined {
+  const belt = readProceduralBelt(visual, state);
+  if (!belt) {
+    return undefined;
+  }
+
+  const geometry = getProceduralBeltGeometry(belt, state);
+  const object = new state.three.Mesh(geometry, [
+    getMaterial(belt.surfaceMaterial, state),
+    getMaterial(belt.sideMaterial, state)
+  ]);
+  object.name = visual.displayName ?? visual.id ?? visual.typeName;
+  object.userData.demo3d = {
+    kind: "procedural-belt",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    length: belt.length,
+    width: belt.width,
+    loopHeight: belt.thickness,
+    radius: belt.endRadius,
+    startCap: belt.startCap,
+    endCap: belt.endCap
+  };
+  state.stats.meshes += 1;
+  state.stats.directVisuals += 1;
+  state.stats.proceduralBelts += 1;
+  return object;
+}
+
+type BeltCap = "Box" | "Cylinder";
+
+interface ProceduralBelt {
+  readonly length: number;
+  readonly width: number;
+  readonly thickness: number;
+  readonly endRadius: number;
+  readonly xOffset: number;
+  readonly zOffset: number;
+  readonly startCap: BeltCap;
+  readonly endCap: BeltCap;
+  readonly surfaceMaterial?: Demo3DMaterial;
+  readonly sideMaterial?: Demo3DMaterial;
+}
+
+function readProceduralBelt(visual: Demo3DVisual, state: RendererState): ProceduralBelt | undefined {
+  const properties = visual.properties;
+  if (!properties || isFalse(properties.textOf("CenterVisible"))) {
+    return undefined;
+  }
+
+  const centerProfile = properties.child("CenterProfile");
+  if (centerProfile && (centerProfile.children.length > 0 || centerProfile.text.length > 0)) {
+    warn(state, {
+      code: "DEMO3D_THREE_UNSUPPORTED_BELT_PROFILE",
+      message: "Straight belt conveyors with a custom CenterProfile are not supported.",
+      sourceId: visual.id,
+      sourceType: visual.typeName,
+      xmlPath: visual.xml.path
+    });
+    return undefined;
+  }
+
+  const startPadding = numberChild(properties, "StartPadding", 0);
+  const endPadding = numberChild(properties, "EndPadding", 0);
+  const leftPadding = numberChild(properties, "LeftPadding", 0);
+  const rightPadding = numberChild(properties, "RightPadding", 0);
+  const serializedLength = numberChildOptional(properties, "Length");
+  const beltLength =
+    numberChildOptional(properties, "BeltLength") ??
+    (serializedLength === undefined ? undefined : serializedLength - startPadding - endPadding);
+  const serializedWidth = numberChildOptional(properties, "Width");
+  const beltWidth = numberChildOptional(properties, "BeltWidth") ?? serializedWidth;
+  const effectiveLength = beltLength ?? 0;
+  const effectiveWidth = (beltWidth ?? 0) - leftPadding - rightPadding;
+  const centerDiameter =
+    numberChildOptional(properties, "CenterDiameter") ??
+    numberChildOptional(properties, "BeltDiameter") ??
+    0;
+  const useBeltCenterHeight = isTrue(properties.textOf("UseBeltCenterHeight"));
+  const loopHeight = useBeltCenterHeight
+    ? numberChild(properties, "BeltCenterHeight", centerDiameter)
+    : centerDiameter;
+  const endRadius = centerDiameter / 2;
+
+  if (effectiveLength <= 0 || effectiveWidth <= 0 || loopHeight <= 0 || endRadius <= 0) {
+    warn(state, {
+      code: "DEMO3D_THREE_INVALID_BELT_DIMENSIONS",
+      message: `Straight belt conveyor dimensions must be positive (length ${effectiveLength}, width ${effectiveWidth}, height ${loopHeight}).`,
+      sourceId: visual.id,
+      sourceType: visual.typeName,
+      xmlPath: visual.xml.path
+    });
+    return undefined;
+  }
+
+  const startCap = beltCap(properties.textOf("BeltCapStart"), visual, state);
+  const endCap = beltCap(properties.textOf("BeltCapEnd"), visual, state);
+  const surfaceMaterial = firstMaterial(properties.child("SurfaceMaterial") ?? properties);
+  const sideMaterial = firstMaterial(properties.child("SurfaceSideMaterial") ?? properties) ?? surfaceMaterial;
+  return {
+    length: effectiveLength,
+    width: effectiveWidth,
+    thickness: loopHeight,
+    endRadius,
+    xOffset: startPadding,
+    zOffset: (rightPadding - leftPadding) / 2,
+    startCap,
+    endCap,
+    surfaceMaterial,
+    sideMaterial
+  };
+}
+
+function beltCap(value: string | undefined, visual: Demo3DVisual, state: RendererState): BeltCap {
+  if (!value || value === "Box") {
+    return "Box";
+  }
+  if (value === "Cylinder") {
+    return "Cylinder";
+  }
+
+  warn(state, {
+    code: "DEMO3D_THREE_UNSUPPORTED_BELT_CAP",
+    message: `Belt cap ${value} is not supported; using Box geometry.`,
+    sourceId: visual.id,
+    sourceType: visual.typeName,
+    xmlPath: visual.xml.path
+  });
+  return "Box";
+}
+
+function getProceduralBeltGeometry(belt: ProceduralBelt, state: RendererState): Three.BufferGeometry {
+  const key = `belt:${belt.length}:${belt.width}:${belt.thickness}:${belt.endRadius}:${belt.xOffset}:${belt.zOffset}:${belt.startCap}:${belt.endCap}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const geometry = belt.startCap === "Box" && belt.endCap === "Box"
+    ? createRectangularBeltGeometry(belt, state)
+    : createRoundedBeltGeometry(belt, state);
+  convertTriangleGeometryToThreeCoordinates(geometry);
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
+function createRectangularBeltGeometry(belt: ProceduralBelt, state: RendererState): Three.BoxGeometry {
+  const geometry = new state.three.BoxGeometry(belt.length, belt.thickness, belt.width);
+  geometry.translate(
+    belt.xOffset + belt.length / 2,
+    -belt.thickness / 2,
+    belt.zOffset
+  );
+
+  // BoxGeometry emits +/-Z last; those two width-facing ends use the side material.
+  geometry.groups.forEach((group, index) => {
+    group.materialIndex = index >= 4 ? 1 : 0;
+  });
+  return geometry;
+}
+
+function createRoundedBeltGeometry(belt: ProceduralBelt, state: RendererState): Three.ExtrudeGeometry {
+  const capRadius = Math.min(belt.endRadius, belt.thickness / 2, belt.length / 2);
+  const startIsCylinder = belt.startCap === "Cylinder";
+  const endIsCylinder = belt.endCap === "Cylinder";
+  const shape = new state.three.Shape();
+  shape.moveTo(startIsCylinder ? capRadius : 0, 0);
+  shape.lineTo(endIsCylinder ? belt.length - capRadius : belt.length, 0);
+  if (endIsCylinder) {
+    shape.absarc(belt.length - capRadius, -capRadius, capRadius, Math.PI / 2, -Math.PI / 2, true);
+    shape.lineTo(belt.length - capRadius, -belt.thickness);
+  } else {
+    shape.lineTo(belt.length, -belt.thickness);
+  }
+  shape.lineTo(startIsCylinder ? capRadius : 0, -belt.thickness);
+  if (startIsCylinder) {
+    shape.lineTo(capRadius, -2 * capRadius);
+    shape.absarc(capRadius, -capRadius, capRadius, -Math.PI / 2, Math.PI / 2, true);
+  } else {
+    shape.lineTo(0, 0);
+  }
+
+  const geometry = new state.three.ExtrudeGeometry(shape, {
+    bevelEnabled: false,
+    curveSegments: 8,
+    depth: belt.width,
+    steps: 1
+  });
+  geometry.translate(belt.xOffset, 0, -belt.width / 2 + belt.zOffset);
+
+  // Extrusion caps are width-facing and use the second material.
+  for (const group of geometry.groups) {
+    group.materialIndex = group.materialIndex === 0 ? 1 : 0;
+  }
+  return geometry;
 }
 
 function createImportedImageObject(visual: Demo3DVisual, state: RendererState): Three.Mesh | undefined {
@@ -1431,6 +1645,14 @@ function numberChildOptional(element: Demo3DXmlElement | undefined, localName: s
 function isRenderableVisualVisible(visual: Demo3DVisual): boolean {
   const visible = visual.properties?.textOf("Visible");
   return visible === undefined || !(visible === "0" || visible.toLowerCase() === "false");
+}
+
+function isTrue(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+function isFalse(value: string | undefined): boolean {
+  return value === "0" || value?.toLowerCase() === "false";
 }
 
 function imageMimeType(base64: string): string {

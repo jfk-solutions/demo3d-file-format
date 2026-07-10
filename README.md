@@ -38,6 +38,22 @@ npm run demo:three
 
 Then open the printed `http://127.0.0.1:.../examples/three-render-smoke.html` URL and choose a `.demo3d` file.
 
+The parser root remains independent of Three.js. Renderer features that require
+procedural reconstruction are opt-in through the `demo3d-file-format/three`
+subpath:
+
+```ts
+import { createDemo3DThreeGroup } from "demo3d-file-format/three";
+
+const group = await createDemo3DThreeGroup(parsed, {
+  renderProceduralBelts: true
+});
+```
+
+`renderProceduralBelts` reconstructs `StraightBeltConveyor` surfaces from their
+serialized dimensions, cap types, and surface/side materials. It defaults to
+`false`.
+
 ## Current Scope
 
 - Read-only parser.
