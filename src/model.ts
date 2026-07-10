@@ -277,7 +277,16 @@ function findDescendants(
 }
 
 function numberValue(value: Demo3DScalarValue | undefined): number | undefined {
-  return typeof value === "number" ? value : undefined;
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function stringValue(value: Demo3DScalarValue | undefined): string | undefined {

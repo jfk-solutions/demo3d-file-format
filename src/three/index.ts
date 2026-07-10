@@ -186,6 +186,7 @@ export function decodeDemo3DThreeGeometry(mesh: Demo3DMesh, three: ThreeModule):
     geometry.setIndex(new three.BufferAttribute(readIndexBuffer(mesh.indices, mesh.indexFormat), 1));
   }
 
+  convertTriangleGeometryToThreeCoordinates(geometry);
   if (!normals) {
     geometry.computeVertexNormals();
   }
@@ -492,6 +493,7 @@ function createImportedImageObject(visual: Demo3DVisual, state: RendererState): 
   const width = numberChild(properties, "WidthScale", 1);
   const height = numberChild(properties, "HeightScale", 1);
   const geometry = new state.three.PlaneGeometry(width, height);
+  convertTriangleGeometryToThreeCoordinates(geometry);
   const material = getImageMaterial(primaryMaterial(visual), state);
   const object = new state.three.Mesh(geometry, material);
   object.name = visual.displayName ?? visual.id ?? visual.typeName;
@@ -580,6 +582,7 @@ function getDirectVisualGeometry(visual: Demo3DVisual, state: RendererState): Th
     return undefined;
   }
 
+  convertTriangleGeometryToThreeCoordinates(geometry);
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   state.primitiveGeometryCache.set(key, geometry);
@@ -657,6 +660,7 @@ function getDrawingBlockGeometry(blockId: string, state: RendererState): Three.B
 
   const geometry = new state.three.BufferGeometry();
   geometry.setAttribute("position", new state.three.BufferAttribute(new Float32Array(positions), 3));
+  geometry.scale(1, 1, -1);
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   state.lineGeometryCache.set(blockId, geometry);
@@ -806,6 +810,7 @@ function getPrimitiveGeometry(
     return undefined;
   }
 
+  convertTriangleGeometryToThreeCoordinates(geometry);
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   state.primitiveGeometryCache.set(key, geometry);
@@ -945,6 +950,7 @@ function createCanvasTextMesh(
 
   const aspect = canvas.width / canvas.height;
   const geometry = new state.three.PlaneGeometry(Math.max(lineHeight * aspect, lineHeight), lineHeight);
+  convertTriangleGeometryToThreeCoordinates(geometry);
   const material = new state.three.MeshBasicMaterial({
     map: texture,
     transparent: true,
@@ -963,6 +969,7 @@ function createFallbackTextMesh(
   state: RendererState
 ): Three.Mesh {
   const geometry = new state.three.PlaneGeometry(Math.max(text.length * lineHeight * 0.6, lineHeight), lineHeight);
+  convertTriangleGeometryToThreeCoordinates(geometry);
   const mesh = new state.three.Mesh(geometry, getMaterial(material, state));
   state.stats.geometries += 1;
   return mesh;
@@ -1224,6 +1231,7 @@ function createPlaceholderMesh(
   state: RendererState
 ): Three.Mesh {
   const geometry = new state.three.BoxGeometry(0.25, 0.25, 0.25);
+  convertTriangleGeometryToThreeCoordinates(geometry);
   const mesh = new state.three.Mesh(geometry, getMaterial(material, state));
   mesh.name = `${name} missing geometry`;
   mesh.userData.demo3d = {
@@ -1337,8 +1345,38 @@ function applyDemo3DTransform(object: Three.Object3D, transformText: string | un
     return;
   }
 
-  object.position.set(values[0] ?? 0, values[1] ?? 0, values[2] ?? 0);
-  object.rotation.set(values[3] ?? 0, values[4] ?? 0, values[5] ?? 0);
+  object.position.set(values[0] ?? 0, values[1] ?? 0, -(values[2] ?? 0));
+  object.rotation.set(-(values[3] ?? 0), -(values[4] ?? 0), values[5] ?? 0);
+}
+
+function convertTriangleGeometryToThreeCoordinates(geometry: Three.BufferGeometry): void {
+  geometry.scale(1, 1, -1);
+  const index = geometry.getIndex();
+
+  if (index) {
+    const values = index.array as unknown as { [index: number]: number; readonly length: number };
+    for (let offset = 0; offset + 2 < values.length; offset += 3) {
+      const second = values[offset + 1];
+      values[offset + 1] = values[offset + 2];
+      values[offset + 2] = second;
+    }
+    index.needsUpdate = true;
+    return;
+  }
+
+  for (const attribute of Object.values(geometry.attributes) as Three.BufferAttribute[]) {
+    const values = attribute.array as unknown as { [index: number]: number; readonly length: number };
+    for (let vertex = 0; vertex + 2 < attribute.count; vertex += 3) {
+      for (let component = 0; component < attribute.itemSize; component += 1) {
+        const second = (vertex + 1) * attribute.itemSize + component;
+        const third = (vertex + 2) * attribute.itemSize + component;
+        const value = values[second];
+        values[second] = values[third];
+        values[third] = value;
+      }
+    }
+    attribute.needsUpdate = true;
+  }
 }
 
 function applyDemo3DScale(object: Three.Object3D, scaleText: string | undefined): void {

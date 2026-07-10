@@ -16,13 +16,17 @@ describe("Three renderer adapter", () => {
 
     expect(geometry.getAttribute("position").count).toBeGreaterThan(0);
     expect(geometry.index?.count).toBeGreaterThan(0);
+    expect(Array.from(geometry.index!.array.slice(0, 3))).toEqual([0, 2, 1]);
   });
 
   it("converts Demo3D diffuse colors into Three materials", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture }]), { parseXml });
-    const material = createDemo3DThreeMaterial(parsed.model.visuals[0]!.materials[0], three);
+    const source = parsed.model.visuals[0]!.materials[0];
+    const material = createDemo3DThreeMaterial(source, three) as three.MeshStandardMaterial;
 
+    expect(source?.diffuse).toBe(-16744448);
     expect(material.type).toBe("MeshStandardMaterial");
+    expect(material.color.getHex()).toBe(0x008000);
   });
 
   it("creates a Three object hierarchy without importing Three from the parser root", async () => {
@@ -48,8 +52,8 @@ describe("Three renderer adapter", () => {
     expect(group.userData.demo3d.stats.meshes).toBe(1);
     expect(group.userData.demo3d.stats.serializedRenderables).toBe(1);
     expect(group.userData.demo3d.stats.unsupported).toBe(0);
-    expect(visual.position.toArray()).toEqual([1, 2, 3]);
-    expect(visual.rotation.y).toBeCloseTo(Math.PI / 2);
+    expect(visual.position.toArray()).toEqual([1, 2, -3]);
+    expect(visual.rotation.y).toBeCloseTo(-Math.PI / 2);
     expect(renderable.userData.demo3d.aspectType).toBe("e3d:CylinderRendererAspect");
   });
 
@@ -67,6 +71,8 @@ describe("Three renderer adapter", () => {
     expect(visual.userData.demo3d.kind).toBe("visual");
     expect(text.userData.demo3d.kind).toBe("text");
     expect(text.userData.demo3d.text).toBe("Hello Demo3D");
+    expect((text as three.Mesh).geometry.getAttribute("normal").getZ(0)).toBe(-1);
+    expect(Array.from((text as three.Mesh).geometry.index!.array.slice(0, 3))).toEqual([0, 1, 2]);
   });
 
   it("renders XML DrawingBlock BREP lines for PrimitivesVisual entries", async () => {

@@ -58,6 +58,7 @@ test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ p
   const result = await page.evaluate(() => window.__demo3dRenderResult);
   expect(result.stats.meshes).toBeGreaterThan(0);
   expect(result.stats.geometries).toBeGreaterThan(0);
+  expect(result.stats.materials).toBeGreaterThan(10);
   expect(result.stats.serializedRenderables).toBeGreaterThan(0);
   expect(result.stats.textVisuals).toBeGreaterThan(0);
   expect(result.stats.textures).toBeGreaterThan(0);
@@ -90,9 +91,9 @@ test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ p
       const green = pixels[index + 1];
       const blue = pixels[index + 2];
       const differsFromBackground =
-        Math.abs(red - 241) > 12 ||
-        Math.abs(green - 243) > 12 ||
-        Math.abs(blue - 244) > 12;
+        Math.abs(red - 49) > 12 ||
+        Math.abs(green - 87) > 12 ||
+        Math.abs(blue - 104) > 12;
       if (differsFromBackground) {
         return true;
       }
@@ -127,6 +128,7 @@ declare global {
       stats: {
         meshes: number;
         geometries: number;
+        materials: number;
         textures: number;
         textVisuals: number;
         drawingBlocks: number;

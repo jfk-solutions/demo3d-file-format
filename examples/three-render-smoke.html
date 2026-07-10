@@ -18,7 +18,8 @@
         height: 100%;
         margin: 0;
         font-family: system-ui, sans-serif;
-        color: #202124;
+        color: #e8eef1;
+        background: #243f4c;
       }
 
       body {
@@ -32,11 +33,13 @@
         gap: 1rem;
         padding: 0.75rem 1rem;
         border-bottom: 1px solid #dadce0;
+        background: #1f343e;
       }
 
       button {
-        border: 1px solid #bdc1c6;
-        background: #fff;
+        border: 1px solid #71848d;
+        color: #17242a;
+        background: #f4f7f8;
         border-radius: 4px;
         padding: 0.35rem 0.65rem;
         font: inherit;
@@ -46,7 +49,7 @@
         display: block;
         width: 100%;
         height: 100%;
-        background: #f1f3f4;
+        background: #315768;
       }
     </style>
   </head>
@@ -93,16 +96,19 @@
 
           status.value = "Rendering...";
           const scene = new THREE.Scene();
-          scene.background = new THREE.Color(0xf1f3f4);
+          scene.background = new THREE.Color(0x315768);
           scene.add(group);
-          scene.add(new THREE.HemisphereLight(0xffffff, 0x606060, 2.5));
-          const directional = new THREE.DirectionalLight(0xffffff, 1.4);
+          scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x18272d, 1.65));
+          const directional = new THREE.DirectionalLight(0xffffff, 2.1);
           directional.position.set(50, 80, 40);
           scene.add(directional);
 
           const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
           renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
           renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+          renderer.outputColorSpace = THREE.SRGBColorSpace;
+          renderer.toneMapping = THREE.ACESFilmicToneMapping;
+          renderer.toneMappingExposure = 1.1;
 
           const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 100000);
           const center = frameCamera(camera, group, "main");
@@ -127,7 +133,7 @@
           };
           status.value =
             `Rendered ${stats.meshes} meshes (${stats.serializedRenderables} placed renderables, ` +
-            `${stats.textVisuals} text visuals).`;
+            `${stats.materials} materials, ${stats.textures} textures).`;
         } catch (error) {
           window.__demo3dRenderResult = {
             status: "error",
@@ -137,6 +143,32 @@
           throw error;
         }
       });
+
+      const sampleUrl = new URL(window.location.href).searchParams.get("sample");
+      if (sampleUrl) {
+        loadSample(sampleUrl);
+      }
+
+      async function loadSample(url) {
+        try {
+          status.value = "Loading sample...";
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Could not load sample (${response.status}).`);
+          }
+
+          const transfer = new DataTransfer();
+          transfer.items.add(new File([await response.blob()], "sample.demo3d"));
+          input.files = transfer.files;
+          input.dispatchEvent(new Event("change"));
+        } catch (error) {
+          window.__demo3dRenderResult = {
+            status: "error",
+            message: error instanceof Error ? error.message : String(error)
+          };
+          status.value = "Sample load failed.";
+        }
+      }
 
       function fitCurrentScene(mode) {
         if (!currentRender) {
@@ -173,8 +205,8 @@
         const size = box.getSize(new THREE.Vector3());
         const radius = Math.max(size.x, size.y, size.z, 1);
         camera.position.copy(center).add(new THREE.Vector3(radius * 0.9, radius * 0.7, radius * 1.1));
-        camera.near = Math.max(radius / 10000, 0.01);
-        camera.far = radius * 20;
+        camera.near = Math.max(radius / 1000, 0.01);
+        camera.far = radius * 10;
         camera.updateProjectionMatrix();
         camera.lookAt(center);
         return center;
