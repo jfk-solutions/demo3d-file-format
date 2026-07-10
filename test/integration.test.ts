@@ -18,7 +18,7 @@ describe("installed Demo3D files", () => {
   });
 
   it.skipIf(!existsSync(suppliedPath))("parses the supplied project without fatal unknown-type failures", async () => {
-    const parsed = await parseDemo3D(readFileSync(suppliedPath), { parseXml });
+    const parsed = await parseDemo3D(readFileSync(suppliedPath));
 
     expect(parsed.modelEntryName.toLowerCase()).toContain(".demo3d");
     expect(parsed.thumbnail).toBeDefined();

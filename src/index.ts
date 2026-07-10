@@ -20,6 +20,7 @@ export {
   type Demo3DXmlAttribute,
   type ParseXmlDocument
 } from "./xml.js";
+export { parseDemo3DXmlFast } from "./fast-xml.js";
 export { ZipArchive, ZipEntry, parseZip, normalizeZipPath, type ZipEntryInfo } from "./zip.js";
 export { Demo3DError, Demo3DUnsupportedError, Demo3DXmlError, Demo3DZipError } from "./errors.js";
 export type { Demo3DInput } from "./binary.js";

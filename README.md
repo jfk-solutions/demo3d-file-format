@@ -26,7 +26,14 @@ console.log(parsed.model.visuals.length);
 
 Runtime code has no production dependencies and uses browser APIs only. ZIP method `8` entries are decompressed with `DecompressionStream("deflate-raw")`.
 
-When parsing outside the browser, pass `parseXml` if `DOMParser` is not available.
+The default single-pass XML parser builds the Demo3D object tree directly, avoiding the time and memory cost of an intermediate browser DOM. For unusual XML inputs, callers can opt into the browser parser or inject another DOM implementation:
+
+```ts
+await parseDemo3D(bytes, { xmlParser: "dom" });
+await parseDemo3D(bytes, { parseXml: customParseXml });
+```
+
+The fast parser supports the XML constructs used by Demo3D files but intentionally rejects document type declarations.
 
 ## Three Renderer Demo
 

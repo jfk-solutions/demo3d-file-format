@@ -1,39 +1,52 @@
 import { decodeText, toUint8Array, type Demo3DInput } from "./binary.js";
 import { Demo3DUnsupportedError, Demo3DZipError } from "./errors.js";
+import { parseDemo3DXmlFast } from "./fast-xml.js";
 import { Demo3DPackage, Demo3DResource, extractProject } from "./model.js";
 import { defaultParseXml, type ParseXmlDocument, xmlDocumentToElement } from "./xml.js";
 import { parseZip, type ZipEntry, type ZipEntryInfo } from "./zip.js";
 
 export interface ParseDemo3DOptions {
   readonly parseXml?: ParseXmlDocument;
+  readonly xmlParser?: "fast" | "dom";
 }
 
 export async function parseDemo3D(input: Demo3DInput, options: ParseDemo3DOptions = {}): Promise<Demo3DPackage> {
   const bytes = toUint8Array(input);
   const archive = parseZip(bytes);
   const modelEntry = findModelEntry(archive.entries);
+  const resourceEntries = archive.entries.filter((entry) => isResourceEntry(entry.name));
+  const bufferEntries = archive.entries.filter((entry) => entry.name.toLowerCase().startsWith("buffers_md/"));
+  const thumbnailEntry = archive.entries.find((entry) => entry.name.toLowerCase() === "thumbnail.png");
+  const resourcePromises = new Map<string, Promise<Demo3DResource>>();
+  const loadResource = (entry: ZipEntry): Promise<Demo3DResource> => {
+    let promise = resourcePromises.get(entry.name);
+    if (!promise) {
+      promise = toResource(entry);
+      resourcePromises.set(entry.name, promise);
+    }
+    return promise;
+  };
+  const resourcesPromise = Promise.all(resourceEntries.map(loadResource));
+  const buffersPromise = Promise.all(bufferEntries.map(loadResource));
+  const thumbnailPromise = thumbnailEntry ? loadResource(thumbnailEntry) : Promise.resolve(undefined);
   const modelBytes = await modelEntry.arrayBuffer();
   const modelXml = decodeText(modelBytes, "utf-8");
-  const parseXml = options.parseXml ?? defaultParseXml;
-  const document = parseXml(modelXml);
-  const root = xmlDocumentToElement(document);
+  const root = options.parseXml || options.xmlParser === "dom"
+    ? xmlDocumentToElement((options.parseXml ?? defaultParseXml)(modelXml))
+    : parseDemo3DXmlFast(modelXml);
   const model = extractProject(root);
-  const resources = await Promise.all(
-    archive.entries.filter((entry) => isResourceEntry(entry.name)).map((entry) => toResource(entry))
-  );
-  const buffers = await Promise.all(
-    archive.entries
-      .filter((entry) => entry.name.toLowerCase().startsWith("buffers_md/"))
-      .map((entry) => toResource(entry))
-  );
-  const thumbnailEntry = archive.entries.find((entry) => entry.name.toLowerCase() === "thumbnail.png");
+  const [resources, buffers, thumbnail] = await Promise.all([
+    resourcesPromise,
+    buffersPromise,
+    thumbnailPromise
+  ]);
 
   return new Demo3DPackage(
     archive.entries.map(toEntryInfo),
     modelEntry.name,
     modelXml,
     model,
-    thumbnailEntry ? await toResource(thumbnailEntry) : undefined,
+    thumbnail,
     resources,
     buffers
   );
