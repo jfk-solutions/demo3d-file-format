@@ -54,6 +54,7 @@ import { createDemo3DThreeGroup } from "demo3d-file-format/three";
 
 const group = await createDemo3DThreeGroup(parsed, {
   renderProceduralBelts: true,
+  renderProceduralRacks: true,
   renderProceduralSupportStands: true,
   renderProceduralConveyorSides: true,
   renderProceduralPhotoEyes: true,
@@ -63,13 +64,22 @@ const group = await createDemo3DThreeGroup(parsed, {
 });
 ```
 
-`renderProceduralBelts` reconstructs `StraightBeltConveyor` surfaces from their
-serialized dimensions, cap types, and surface/side materials. It defaults to
-`false`.
+`renderProceduralBelts` reconstructs `StraightBeltConveyor` and
+`CurveBeltConveyor` surfaces, plus connector-shaped `InjectorBeltConveyor`
+surfaces, from their serialized dimensions, cap types, connectors, and
+surface/side materials. It also applies Demo3D's omitted default belt width and
+diameter values. It defaults to `false`.
+
+`renderProceduralRacks` reconstructs `RackVisual` uprights and struts from the
+serialized bay, frame, visibility, spacing, and color properties. It defaults
+to `false`.
 
 `renderProceduralSupportStands` reconstructs visible `SupportStand` instances
 from their serialized leg, foot, floor-plate, and cross-brace extrusion
-profiles. Geometry is cached by profile and dimensions. It defaults to `false`.
+profiles. If a file omits all four profiles because it uses Demo3D's defaults,
+the renderer creates an approximate default two-leg stand with feet, floor
+plates, and cross braces. Geometry is cached by profile and dimensions. It
+defaults to `false`.
 
 The other procedural options reconstruct serialized conveyor side profiles,
 photo-eye bodies and beams, missing roller sets, approximate motor housings, and

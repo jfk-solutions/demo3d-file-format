@@ -43,6 +43,7 @@ export interface Demo3DThreeRendererOptions {
   readonly showPlaceholders?: boolean;
   readonly renderText?: boolean;
   readonly renderProceduralBelts?: boolean;
+  readonly renderProceduralRacks?: boolean;
   readonly renderProceduralSupportStands?: boolean;
   readonly renderProceduralConveyorSides?: boolean;
   readonly renderProceduralPhotoEyes?: boolean;
@@ -67,6 +68,7 @@ export interface Demo3DThreeStats {
   lines: number;
   directVisuals: number;
   proceduralBelts: number;
+  proceduralRacks: number;
   proceduralSupportStands: number;
   proceduralConveyorSides: number;
   proceduralPhotoEyes: number;
@@ -309,6 +311,7 @@ function createState(
       lines: 0,
       directVisuals: 0,
       proceduralBelts: 0,
+      proceduralRacks: 0,
       proceduralSupportStands: 0,
       proceduralConveyorSides: 0,
       proceduralPhotoEyes: 0,
@@ -579,9 +582,19 @@ function createDirectVisualObject(
     return createImportedImageObject(visual, state);
   }
 
-  if (visual.typeName === "e3d:StraightBeltConveyor") {
+  if (
+    visual.typeName === "e3d:StraightBeltConveyor" ||
+    visual.typeName === "e3d:CurveBeltConveyor" ||
+    visual.typeName === "e3d:InjectorBeltConveyor"
+  ) {
     return state.options.renderProceduralBelts === true
-      ? createStraightBeltConveyorObject(visual, state)
+      ? createBeltConveyorObject(visual, state)
+      : undefined;
+  }
+
+  if (visual.typeName === "e3d:RackVisual") {
+    return state.options.renderProceduralRacks === true
+      ? createRackObject(visual, state)
       : undefined;
   }
 
@@ -620,10 +633,20 @@ function createDirectVisualObject(
   return object;
 }
 
-function createStraightBeltConveyorObject(
+function createBeltConveyorObject(
   visual: Demo3DVisual,
   state: RendererState
 ): Three.Mesh | undefined {
+  if (visual.typeName === "e3d:CurveBeltConveyor") {
+    return createCurveBeltConveyorObject(visual, state);
+  }
+  if (visual.typeName === "e3d:InjectorBeltConveyor") {
+    const injector = createInjectorBeltConveyorObject(visual, state);
+    if (injector) {
+      return injector;
+    }
+  }
+
   const belt = readProceduralBelt(visual, state);
   if (!belt) {
     return undefined;
@@ -652,6 +675,211 @@ function createStraightBeltConveyorObject(
   state.stats.directVisuals += 1;
   state.stats.proceduralBelts += 1;
   return object;
+}
+
+const DEFAULT_BELT_WIDTH = 0.5;
+const DEFAULT_BELT_DIAMETER = 0.06;
+
+type Point3 = readonly [number, number, number];
+
+function appendOrientedTriangle(
+  target: number[],
+  a: Point3,
+  b: Point3,
+  c: Point3,
+  normal: Point3
+): void {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const abz = b[2] - a[2];
+  const acx = c[0] - a[0];
+  const acy = c[1] - a[1];
+  const acz = c[2] - a[2];
+  const crossX = aby * acz - abz * acy;
+  const crossY = abz * acx - abx * acz;
+  const crossZ = abx * acy - aby * acx;
+  const forward = crossX * normal[0] + crossY * normal[1] + crossZ * normal[2] >= 0;
+  target.push(...a, ...(forward ? b : c), ...(forward ? c : b));
+}
+
+function appendOrientedQuad(
+  target: number[],
+  a: Point3,
+  b: Point3,
+  c: Point3,
+  d: Point3,
+  normal: Point3
+): void {
+  appendOrientedTriangle(target, a, b, c, normal);
+  appendOrientedTriangle(target, a, c, d, normal);
+}
+
+interface ProceduralInjectorBelt {
+  readonly startEdge: readonly [Point3, Point3];
+  readonly endEdge: readonly [Point3, Point3];
+  readonly thickness: number;
+  readonly surfaceMaterial?: Demo3DMaterial;
+  readonly sideMaterial?: Demo3DMaterial;
+}
+
+function createInjectorBeltConveyorObject(
+  visual: Demo3DVisual,
+  state: RendererState
+): Three.Mesh | undefined {
+  const belt = readProceduralInjectorBelt(visual);
+  if (!belt) {
+    return undefined;
+  }
+
+  const geometry = getProceduralInjectorBeltGeometry(belt, state);
+  const object = new state.three.Mesh(geometry, [
+    getMaterial(belt.surfaceMaterial, state),
+    getMaterial(belt.sideMaterial, state)
+  ]);
+  object.name = visual.displayName ?? visual.id ?? visual.typeName;
+  object.userData.demo3d = {
+    kind: "procedural-belt",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    loopHeight: belt.thickness,
+    startEdge: belt.startEdge,
+    endEdge: belt.endEdge,
+    connectorShaped: true
+  };
+  state.stats.meshes += 1;
+  state.stats.directVisuals += 1;
+  state.stats.proceduralBelts += 1;
+  return object;
+}
+
+function readProceduralInjectorBelt(visual: Demo3DVisual): ProceduralInjectorBelt | undefined {
+  const properties = visual.properties;
+  if (!properties || isFalse(properties.textOf("CenterVisible"))) {
+    return undefined;
+  }
+  const startEdge = conveyorConnectorEdge(visual, "Start");
+  const serializedEndEdge = conveyorConnectorEdge(visual, "End");
+  if (!startEdge || !serializedEndEdge) {
+    return undefined;
+  }
+
+  const sameDirection = pointDistanceSquared(startEdge[0], serializedEndEdge[0]) +
+    pointDistanceSquared(startEdge[1], serializedEndEdge[1]);
+  const reversedDirection = pointDistanceSquared(startEdge[0], serializedEndEdge[1]) +
+    pointDistanceSquared(startEdge[1], serializedEndEdge[0]);
+  const endEdge: readonly [Point3, Point3] = sameDirection <= reversedDirection
+    ? serializedEndEdge
+    : [serializedEndEdge[1], serializedEndEdge[0]];
+  const beltDiameter =
+    numberChildOptional(properties, "CenterDiameter") ??
+    numberChildOptional(properties, "BeltDiameter") ??
+    DEFAULT_BELT_DIAMETER;
+  const thickness = isTrue(properties.textOf("UseBeltCenterHeight"))
+    ? numberChild(properties, "BeltCenterHeight", beltDiameter)
+    : beltDiameter;
+  if (thickness <= 0) {
+    return undefined;
+  }
+
+  const surfaceMaterial = firstMaterial(properties.child("SurfaceMaterial") ?? properties);
+  const sideMaterial = firstMaterial(properties.child("SurfaceSideMaterial") ?? properties) ?? surfaceMaterial;
+  return { startEdge, endEdge, thickness, surfaceMaterial, sideMaterial };
+}
+
+function conveyorConnectorEdge(
+  visual: Demo3DVisual,
+  name: "Start" | "End"
+): readonly [Point3, Point3] | undefined {
+  const connector = visual.xml.child("CN")?.children.find(
+    (candidate) => candidate.xsiType === "e3d:ConveyorConnector" && candidate.textOf("Name") === name
+  );
+  if (!connector) {
+    return undefined;
+  }
+  const start = pipePoint(connector.textOf("Start"));
+  const end = pipePoint(connector.textOf("End"));
+  return start && end ? [start, end] : undefined;
+}
+
+function pipePoint(value: string | undefined): Point3 | undefined {
+  const values = parsePipeNumbers(value);
+  if (values.length === 0) {
+    return undefined;
+  }
+  return [values[0] ?? 0, values[1] ?? 0, -(values[2] ?? 0)];
+}
+
+function pointDistanceSquared(left: Point3, right: Point3): number {
+  return (
+    (left[0] - right[0]) ** 2 +
+    (left[1] - right[1]) ** 2 +
+    (left[2] - right[2]) ** 2
+  );
+}
+
+function getProceduralInjectorBeltGeometry(
+  belt: ProceduralInjectorBelt,
+  state: RendererState
+): Three.BufferGeometry {
+  const key = `injector-belt:${[...belt.startEdge, ...belt.endEdge].map((point) => point.join(",")).join(";")}:${belt.thickness}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const surfacePositions: number[] = [];
+  const sidePositions: number[] = [];
+  const top = [belt.startEdge[0], belt.startEdge[1], belt.endEdge[1], belt.endEdge[0]] as const;
+  const bottom = top.map(
+    (point) => [point[0], point[1] - belt.thickness, point[2]] as Point3
+  ) as unknown as readonly [Point3, Point3, Point3, Point3];
+  const center: Point3 = [
+    top.reduce((sum, point) => sum + point[0], 0) / top.length,
+    top.reduce((sum, point) => sum + point[1], 0) / top.length,
+    top.reduce((sum, point) => sum + point[2], 0) / top.length
+  ];
+
+  appendOrientedQuad(surfacePositions, top[0], top[1], top[2], top[3], [0, 1, 0]);
+  appendOrientedQuad(surfacePositions, bottom[0], bottom[3], bottom[2], bottom[1], [0, -1, 0]);
+  appendInjectorBeltWall(surfacePositions, top[0], top[1], bottom[1], bottom[0], center);
+  appendInjectorBeltWall(sidePositions, top[1], top[2], bottom[2], bottom[1], center);
+  appendInjectorBeltWall(surfacePositions, top[2], top[3], bottom[3], bottom[2], center);
+  appendInjectorBeltWall(sidePositions, top[3], top[0], bottom[0], bottom[3], center);
+
+  const geometry = new state.three.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new state.three.Float32BufferAttribute([...surfacePositions, ...sidePositions], 3)
+  );
+  geometry.addGroup(0, surfacePositions.length / 3, 0);
+  geometry.addGroup(surfacePositions.length / 3, sidePositions.length / 3, 1);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
+function appendInjectorBeltWall(
+  target: number[],
+  topA: Point3,
+  topB: Point3,
+  bottomB: Point3,
+  bottomA: Point3,
+  center: Point3
+): void {
+  const middleX = (topA[0] + topB[0]) / 2;
+  const middleZ = (topA[2] + topB[2]) / 2;
+  let normalX = topB[2] - topA[2];
+  let normalZ = -(topB[0] - topA[0]);
+  if ((middleX - center[0]) * normalX + (middleZ - center[2]) * normalZ < 0) {
+    normalX = -normalX;
+    normalZ = -normalZ;
+  }
+  appendOrientedQuad(target, topA, topB, bottomB, bottomA, [normalX, 0, normalZ]);
 }
 
 type BeltCap = "Box" | "Cylinder";
@@ -696,13 +924,13 @@ function readProceduralBelt(visual: Demo3DVisual, state: RendererState): Procedu
     numberChildOptional(properties, "BeltLength") ??
     (serializedLength === undefined ? undefined : serializedLength - startPadding - endPadding);
   const serializedWidth = numberChildOptional(properties, "Width");
-  const beltWidth = numberChildOptional(properties, "BeltWidth") ?? serializedWidth;
+  const beltWidth = numberChildOptional(properties, "BeltWidth") ?? serializedWidth ?? DEFAULT_BELT_WIDTH;
   const effectiveLength = beltLength ?? 0;
-  const effectiveWidth = (beltWidth ?? 0) - leftPadding - rightPadding;
+  const effectiveWidth = beltWidth - leftPadding - rightPadding;
   const centerDiameter =
     numberChildOptional(properties, "CenterDiameter") ??
     numberChildOptional(properties, "BeltDiameter") ??
-    0;
+    DEFAULT_BELT_DIAMETER;
   const useBeltCenterHeight = isTrue(properties.textOf("UseBeltCenterHeight"));
   const loopHeight = useBeltCenterHeight
     ? numberChild(properties, "BeltCenterHeight", centerDiameter)
@@ -774,6 +1002,194 @@ function getProceduralBeltGeometry(belt: ProceduralBelt, state: RendererState): 
   return geometry;
 }
 
+interface ProceduralCurveBelt {
+  readonly innerRadius: number;
+  readonly width: number;
+  readonly thickness: number;
+  readonly angle: number;
+  readonly stepAngle: number;
+  readonly surfaceMaterial?: Demo3DMaterial;
+  readonly sideMaterial?: Demo3DMaterial;
+}
+
+function createCurveBeltConveyorObject(
+  visual: Demo3DVisual,
+  state: RendererState
+): Three.Mesh | undefined {
+  const belt = readProceduralCurveBelt(visual, state);
+  if (!belt) {
+    return undefined;
+  }
+
+  const geometry = getProceduralCurveBeltGeometry(belt, state);
+  const object = new state.three.Mesh(geometry, [
+    getMaterial(belt.surfaceMaterial, state),
+    getMaterial(belt.sideMaterial, state)
+  ]);
+  object.name = visual.displayName ?? visual.id ?? visual.typeName;
+  object.userData.demo3d = {
+    kind: "procedural-belt",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    innerRadius: belt.innerRadius,
+    width: belt.width,
+    loopHeight: belt.thickness,
+    angle: belt.angle
+  };
+  state.stats.meshes += 1;
+  state.stats.directVisuals += 1;
+  state.stats.proceduralBelts += 1;
+  return object;
+}
+
+function readProceduralCurveBelt(
+  visual: Demo3DVisual,
+  state: RendererState
+): ProceduralCurveBelt | undefined {
+  const properties = visual.properties;
+  if (!properties || isFalse(properties.textOf("CenterVisible"))) {
+    return undefined;
+  }
+
+  const centerProfile = properties.child("CenterProfile");
+  if (centerProfile && (centerProfile.children.length > 0 || centerProfile.text.length > 0)) {
+    warn(state, {
+      code: "DEMO3D_THREE_UNSUPPORTED_BELT_PROFILE",
+      message: "Curve belt conveyors with a custom CenterProfile are not supported.",
+      sourceId: visual.id,
+      sourceType: visual.typeName,
+      xmlPath: visual.xml.path
+    });
+    return undefined;
+  }
+
+  const innerRadius = numberChild(properties, "InnerRadius", 0.5);
+  const width = numberChildOptional(properties, "BeltWidth")
+    ?? numberChildOptional(properties, "Width")
+    ?? DEFAULT_BELT_WIDTH;
+  const beltDiameter =
+    numberChildOptional(properties, "CenterDiameter") ??
+    numberChildOptional(properties, "BeltDiameter") ??
+    DEFAULT_BELT_DIAMETER;
+  const thickness = isTrue(properties.textOf("UseBeltCenterHeight"))
+    ? numberChild(properties, "BeltCenterHeight", beltDiameter)
+    : beltDiameter;
+  const angle = degreesToRadians(numberChild(properties, "Angle", 90));
+  const stepAngle = Math.abs(degreesToRadians(numberChild(properties, "StepAngle", 15)));
+
+  if (innerRadius <= 0 || width <= 0 || thickness <= 0 || Math.abs(angle) <= 1e-6) {
+    warn(state, {
+      code: "DEMO3D_THREE_INVALID_BELT_DIMENSIONS",
+      message: `Curve belt conveyor dimensions must be positive and its angle non-zero (inner radius ${innerRadius}, width ${width}, height ${thickness}, angle ${numberChild(properties, "Angle", 90)}).`,
+      sourceId: visual.id,
+      sourceType: visual.typeName,
+      xmlPath: visual.xml.path
+    });
+    return undefined;
+  }
+
+  const surfaceMaterial = firstMaterial(properties.child("SurfaceMaterial") ?? properties);
+  const sideMaterial = firstMaterial(properties.child("SurfaceSideMaterial") ?? properties) ?? surfaceMaterial;
+  return {
+    innerRadius,
+    width,
+    thickness,
+    angle,
+    stepAngle: stepAngle > 1e-6 ? stepAngle : Math.PI / 12,
+    surfaceMaterial,
+    sideMaterial
+  };
+}
+
+function getProceduralCurveBeltGeometry(
+  belt: ProceduralCurveBelt,
+  state: RendererState
+): Three.BufferGeometry {
+  const key = `curve-belt:${belt.innerRadius}:${belt.width}:${belt.thickness}:${belt.angle}:${belt.stepAngle}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const surfacePositions: number[] = [];
+  const sidePositions: number[] = [];
+  const outerRadius = belt.innerRadius + belt.width;
+  const segments = Math.max(4, Math.ceil(Math.abs(belt.angle) / belt.stepAngle));
+  const point = (radius: number, y: number, theta: number): Point3 => [
+    radius * Math.cos(theta),
+    y,
+    radius * Math.sin(theta)
+  ];
+  for (let segment = 0; segment < segments; segment += 1) {
+    const theta0 = belt.angle * (segment / segments);
+    const theta1 = belt.angle * ((segment + 1) / segments);
+    const middle = (theta0 + theta1) / 2;
+    const innerTop0 = point(belt.innerRadius, 0, theta0);
+    const innerTop1 = point(belt.innerRadius, 0, theta1);
+    const outerTop0 = point(outerRadius, 0, theta0);
+    const outerTop1 = point(outerRadius, 0, theta1);
+    const innerBottom0 = point(belt.innerRadius, -belt.thickness, theta0);
+    const innerBottom1 = point(belt.innerRadius, -belt.thickness, theta1);
+    const outerBottom0 = point(outerRadius, -belt.thickness, theta0);
+    const outerBottom1 = point(outerRadius, -belt.thickness, theta1);
+
+    appendOrientedQuad(surfacePositions, innerTop0, outerTop0, outerTop1, innerTop1, [0, 1, 0]);
+    appendOrientedQuad(surfacePositions, innerBottom0, innerBottom1, outerBottom1, outerBottom0, [0, -1, 0]);
+    appendOrientedQuad(
+      sidePositions,
+      outerBottom0,
+      outerBottom1,
+      outerTop1,
+      outerTop0,
+      [Math.cos(middle), 0, Math.sin(middle)]
+    );
+    appendOrientedQuad(
+      sidePositions,
+      innerBottom0,
+      innerTop0,
+      innerTop1,
+      innerBottom1,
+      [-Math.cos(middle), 0, -Math.sin(middle)]
+    );
+  }
+
+  const direction = Math.sign(belt.angle) || 1;
+  const start = 0;
+  const end = belt.angle;
+  appendOrientedQuad(
+    surfacePositions,
+    point(belt.innerRadius, -belt.thickness, start),
+    point(outerRadius, -belt.thickness, start),
+    point(outerRadius, 0, start),
+    point(belt.innerRadius, 0, start),
+    [direction * Math.sin(start), 0, -direction * Math.cos(start)]
+  );
+  appendOrientedQuad(
+    surfacePositions,
+    point(belt.innerRadius, -belt.thickness, end),
+    point(belt.innerRadius, 0, end),
+    point(outerRadius, 0, end),
+    point(outerRadius, -belt.thickness, end),
+    [-direction * Math.sin(end), 0, direction * Math.cos(end)]
+  );
+
+  const geometry = new state.three.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new state.three.Float32BufferAttribute([...surfacePositions, ...sidePositions], 3)
+  );
+  geometry.addGroup(0, surfacePositions.length / 3, 0);
+  geometry.addGroup(surfacePositions.length / 3, sidePositions.length / 3, 1);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
 function createRectangularBeltGeometry(belt: ProceduralBelt, state: RendererState): Three.BoxGeometry {
   const geometry = new state.three.BoxGeometry(belt.length, belt.thickness, belt.width);
   geometry.translate(
@@ -825,6 +1241,140 @@ function createRoundedBeltGeometry(belt: ProceduralBelt, state: RendererState): 
   return geometry;
 }
 
+function createRackObject(visual: Demo3DVisual, state: RendererState): Three.Group | undefined {
+  const properties = visual.properties;
+  if (!properties) {
+    return undefined;
+  }
+
+  const frameHeight = numberChild(properties, "FrameHeight", 0);
+  const uprightWidth = numberChild(properties, "UprightWidth", 0.05);
+  const uprightDepth = numberChild(properties, "UprightDepth", 0.05);
+  const frameDepth = numberChildOptional(properties, "FrameDepth") ?? numberChild(properties, "BayDepth", 0);
+  const strutWidth = numberChild(properties, "StrutWidth", 0.05);
+  if (frameHeight <= 0 || frameDepth <= 0 || uprightWidth <= 0 || uprightDepth <= 0 || strutWidth <= 0) {
+    warn(state, {
+      code: "DEMO3D_THREE_INVALID_RACK_DIMENSIONS",
+      message: `Rack dimensions must be positive (height ${frameHeight}, depth ${frameDepth}, upright ${uprightWidth} x ${uprightDepth}, strut ${strutWidth}).`,
+      sourceId: visual.id,
+      sourceType: visual.typeName,
+      xmlPath: visual.xml.path
+    });
+    return undefined;
+  }
+
+  const numBays = Math.max(1, Math.round(numberChild(properties, "NumBays", 1)));
+  const bayWidth = Math.max(0, numberChild(properties, "BayWidth", 0));
+  const framePitch = bayWidth + uprightWidth + Math.max(0, numberChild(properties, "MinFrameGap", 0));
+  const framePositions = [0];
+  if (!isFalse(properties.child("MiddleFrames")?.textOf("Visible"))) {
+    for (let bay = 1; bay < numBays; bay += 1) {
+      framePositions.push(bay * framePitch);
+    }
+  }
+  if (!isFalse(properties.child("LastFrame")?.textOf("Visible")) && framePitch > 0) {
+    framePositions.push(numBays * framePitch);
+  }
+
+  const initialStrutHeight = clamp(numberChild(properties, "InitialStrutHeight", strutWidth / 2), 0, frameHeight);
+  const strutSpanHeight = numberChild(properties, "StrutSpanHeight", frameHeight);
+  const strutHeights = [initialStrutHeight];
+  if (strutSpanHeight > 0) {
+    for (
+      let height = initialStrutHeight + strutSpanHeight;
+      height < frameHeight - 1e-6;
+      height += strutSpanHeight
+    ) {
+      strutHeights.push(height);
+    }
+  }
+  const extensionHeight = clamp(
+    frameHeight - Math.max(0, numberChild(properties, "ExtensionStrutOffset", strutWidth / 2)),
+    0,
+    frameHeight
+  );
+  if (!strutHeights.some((height) => Math.abs(height - extensionHeight) < 1e-6)) {
+    strutHeights.push(extensionHeight);
+  }
+  strutHeights.sort((left, right) => left - right);
+
+  const uprightMaterial = getColorMaterial(
+    demo3dColorValue(properties.child("UprightColor"), 0xffd3d3d3 | 0),
+    state
+  );
+  const strutMaterial = getColorMaterial(
+    demo3dColorValue(properties.child("StrutColor"), 0xffd3d3d3 | 0),
+    state
+  );
+  const uprightGeometry = cachedBoxGeometry(uprightWidth, frameHeight, uprightDepth, state);
+  const strutGeometry = cachedBoxGeometry(strutWidth, strutWidth, frameDepth, state);
+  const group = new state.three.Group();
+  group.name = `${visual.displayName ?? visual.id ?? "Rack"} generated geometry`;
+
+  for (const frameX of framePositions) {
+    for (const z of [-frameDepth / 2, frameDepth / 2]) {
+      const upright = new state.three.Mesh(uprightGeometry, uprightMaterial);
+      upright.name = "Rack upright";
+      upright.position.set(frameX, frameHeight / 2, z);
+      upright.userData.demo3d = { kind: "procedural-rack-upright", frameX };
+      group.add(upright);
+      state.stats.meshes += 1;
+    }
+    for (const height of strutHeights) {
+      const strut = new state.three.Mesh(strutGeometry, strutMaterial);
+      strut.name = "Rack strut";
+      strut.position.set(frameX, height, 0);
+      strut.userData.demo3d = { kind: "procedural-rack-strut", frameX, height };
+      group.add(strut);
+      state.stats.meshes += 1;
+    }
+  }
+
+  group.userData.demo3d = {
+    kind: "procedural-rack",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    frameHeight,
+    frameDepth,
+    framePositions,
+    strutHeights
+  };
+  state.stats.groups += 1;
+  state.stats.directVisuals += 1;
+  state.stats.proceduralRacks += 1;
+  return group;
+}
+
+function demo3dColorValue(container: Demo3DXmlElement | undefined, fallback: number): number {
+  const numeric = container?.text.trim();
+  if (numeric) {
+    const parsed = Number(numeric);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  switch (container?.textOf("name")?.trim().toLowerCase()) {
+    case "black":
+      return 0xff000000 | 0;
+    case "darkgray":
+    case "darkgrey":
+      return 0xffa9a9a9 | 0;
+    case "gray":
+    case "grey":
+      return 0xff808080 | 0;
+    case "lightgray":
+    case "lightgrey":
+      return 0xffd3d3d3 | 0;
+    case "white":
+      return 0xffffffff | 0;
+    default:
+      return fallback;
+  }
+}
+
 function createSupportStandObject(
   visual: Demo3DVisual,
   parentVisual: Demo3DVisual | undefined,
@@ -838,7 +1388,13 @@ function createSupportStandObject(
   const footProfile = properties?.footProfile;
   const floorPlateProfile = properties?.floorPlateProfile;
   const crossBraceProfile = properties?.crossBraceProfile;
-  if (!properties || !legProfile || !crossBraceProfile) {
+  if (!properties) {
+    return undefined;
+  }
+  if (!legProfile && !crossBraceProfile) {
+    return createDefaultSupportStandObject(visual, parentVisual, properties, state);
+  }
+  if (!legProfile || !crossBraceProfile) {
     warn(state, {
       code: "DEMO3D_THREE_UNSUPPORTED_SUPPORT_STAND_PROFILE",
       message: "Support stand is missing its leg or cross-brace extrusion profile.",
@@ -949,6 +1505,167 @@ function createSupportStandObject(
   state.stats.directVisuals += 1;
   state.stats.proceduralSupportStands += 1;
   return group;
+}
+
+const DEFAULT_CONVEYOR_HEIGHT = 0.83;
+const DEFAULT_SUPPORT_LEG_SIZE = 0.04;
+const DEFAULT_SUPPORT_FOOT_SIZE = 0.06;
+const DEFAULT_SUPPORT_FLOOR_PLATE_SIZE = 0.1;
+
+function createDefaultSupportStandObject(
+  visual: Demo3DVisual,
+  parentVisual: Demo3DVisual | undefined,
+  properties: NonNullable<Demo3DSupportStand["supportProperties"]>,
+  state: RendererState
+): Three.Group | undefined {
+  const parentWidth =
+    numberChildOptional(parentVisual?.properties, "RollerWidth") ??
+    numberChildOptional(parentVisual?.properties, "BeltWidth") ??
+    numberChildOptional(parentVisual?.properties, "Width") ??
+    DEFAULT_BELT_WIDTH;
+  const conveyorOffset = properties.conveyorOffset;
+  const sideExtension = Math.abs(conveyorOffset[2] ?? 0);
+  const span = Math.max(parentWidth + sideExtension * 2, 0.1);
+  const top = conveyorOffset[1] ?? 0;
+  const x = conveyorOffset[0] ?? 0;
+  const floorY = numberChild(properties.xml, "FloorY", 0);
+  const explicitStandHeight =
+    numberChildOptional(properties.xml, "StandHeight") ??
+    numberChildOptional(properties.xml, "SupportHeight") ??
+    numberChildOptional(properties.xml, "Height");
+  const explicitLegHeight = numberChildOptional(properties.xml, "LegHeight");
+  const conveyorHeight = numberChildOptional(parentVisual?.properties, "ConveyorHeight") ?? DEFAULT_CONVEYOR_HEIGHT;
+  const componentHeight = explicitLegHeight === undefined
+    ? undefined
+    : explicitLegHeight + properties.footHeight + properties.floorPlateHeight;
+  const supportHeight = Math.max(
+    explicitStandHeight ?? componentHeight ?? conveyorHeight + top - floorY,
+    properties.footHeight + properties.floorPlateHeight + 0.001
+  );
+  const bottom = top - supportHeight;
+  const floorPlateHeight = clamp(properties.floorPlateHeight, 0, supportHeight);
+  const footHeight = clamp(properties.footHeight, 0, supportHeight - floorPlateHeight);
+  const legHeight = Math.max(supportHeight - floorPlateHeight - footHeight, 0.001);
+  const braces = [...properties.crossBraceHeights]
+    .filter((height) => height > 0 && height < supportHeight)
+    .sort((left, right) => left - right);
+  const group = new state.three.Group();
+  group.name = `${visual.displayName ?? visual.id ?? "Support stand"} default geometry`;
+  const legMaterial = supportComponentMaterial(visual.properties?.child("LegMaterial"), properties.legMaterial, state);
+  const footMaterial = supportComponentMaterial(visual.properties?.child("FootMaterial"), properties.footMaterial, state);
+  const floorPlateMaterial = supportComponentMaterial(
+    visual.properties?.child("FloorPlateMaterial"),
+    properties.floorPlateMaterial,
+    state
+  );
+  const braceMaterial = supportComponentMaterial(
+    visual.properties?.child("CrossBraceMaterial"),
+    properties.crossBraceMaterial,
+    state
+  );
+
+  for (const z of [-span / 2, span / 2]) {
+    addDefaultSupportBox(
+      group,
+      "leg",
+      DEFAULT_SUPPORT_LEG_SIZE,
+      legHeight,
+      DEFAULT_SUPPORT_LEG_SIZE,
+      [x, top - legHeight / 2, z],
+      legMaterial,
+      state
+    );
+    if (footHeight > 0) {
+      addDefaultSupportBox(
+        group,
+        "foot",
+        DEFAULT_SUPPORT_FOOT_SIZE,
+        footHeight,
+        DEFAULT_SUPPORT_FOOT_SIZE,
+        [x, bottom + floorPlateHeight + footHeight / 2, z],
+        footMaterial,
+        state
+      );
+    }
+    if (floorPlateHeight > 0) {
+      addDefaultSupportBox(
+        group,
+        "floor plate",
+        DEFAULT_SUPPORT_FLOOR_PLATE_SIZE,
+        floorPlateHeight,
+        DEFAULT_SUPPORT_FLOOR_PLATE_SIZE,
+        [x, bottom + floorPlateHeight / 2, z],
+        floorPlateMaterial,
+        state
+      );
+    }
+  }
+
+  for (const height of braces) {
+    addDefaultSupportBox(
+      group,
+      "cross brace",
+      DEFAULT_SUPPORT_LEG_SIZE,
+      DEFAULT_SUPPORT_LEG_SIZE,
+      span,
+      [x, bottom + height, 0],
+      braceMaterial,
+      state
+    );
+  }
+  addDefaultSupportBox(
+    group,
+    "top brace",
+    DEFAULT_SUPPORT_LEG_SIZE,
+    DEFAULT_SUPPORT_LEG_SIZE,
+    span,
+    [x, top - DEFAULT_SUPPORT_LEG_SIZE / 2, 0],
+    braceMaterial,
+    state
+  );
+
+  group.userData.demo3d = {
+    kind: "procedural-support-stand",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    supportHeight,
+    span,
+    braceHeights: braces,
+    approximate: true,
+    defaultProfiles: true
+  };
+  state.stats.groups += 1;
+  state.stats.directVisuals += 1;
+  state.stats.proceduralSupportStands += 1;
+  return group;
+}
+
+function supportComponentMaterial(
+  container: Demo3DXmlElement | undefined,
+  fallbackColor: number | undefined,
+  state: RendererState
+): Three.Material {
+  return materialFromContainer(container, state) ?? getColorMaterial(fallbackColor, state);
+}
+
+function addDefaultSupportBox(
+  group: Three.Group,
+  component: string,
+  width: number,
+  height: number,
+  depth: number,
+  position: readonly [number, number, number],
+  material: Three.Material,
+  state: RendererState
+): void {
+  const mesh = new state.three.Mesh(cachedBoxGeometry(width, height, depth, state), material);
+  mesh.name = `Default support ${component}`;
+  mesh.position.set(position[0], position[1], position[2]);
+  mesh.userData.demo3d = { kind: "support-stand-component", component, approximate: true };
+  group.add(mesh);
+  state.stats.meshes += 1;
 }
 
 type SupportProfileAxis = "vertical" | "horizontal";
@@ -1305,6 +2022,7 @@ function addProceduralRollers(group: Three.Group, visual: Demo3DVisual, state: R
   if (!properties) {
     return;
   }
+
   const width =
     numberChildOptional(properties, "RollerWidth") ??
     numberChildOptional(properties, "Width") ??
@@ -1314,6 +2032,30 @@ function addProceduralRollers(group: Three.Group, visual: Demo3DVisual, state: R
   const material = materialFromContainer(properties.child("SurfaceMaterial") ?? properties, state)
     ?? getColorMaterial(numberChildOptional(properties, "RollerColor"), state);
   const geometry = cachedRollerGeometry(radius, width, state);
+
+  if (visual.typeName === "e3d:DiverterRollerConveyor") {
+    const length = numberChild(properties, "Length", 1);
+    const pitch = Math.max(numberChild(properties, "RollerPitch", diameter * 1.2), diameter);
+    const count = Math.max(1, Math.round(numberChildOptional(properties, "RollerCount") ?? length / pitch));
+    const across = Math.max(1, Math.round(numberChild(properties, "NumRollersAcrossWidth", 1)));
+    const totalWidth = numberChild(properties, "Width", width);
+    for (let index = 0; index < count; index += 1) {
+      for (let acrossIndex = 0; acrossIndex < across; acrossIndex += 1) {
+        const roller = new state.three.Mesh(geometry, material);
+        roller.name = `Generated divert roller ${index + 1}.${acrossIndex + 1}`;
+        roller.position.set(
+          ((index + 0.5) / count) * length,
+          0,
+          ((acrossIndex + 0.5) / across - 0.5) * totalWidth
+        );
+        roller.userData.demo3d = { kind: "procedural-roller", index, acrossIndex };
+        group.add(roller);
+        state.stats.meshes += 1;
+        state.stats.proceduralRollers += 1;
+      }
+    }
+    return;
+  }
 
   if (visual.typeName === "e3d:CurveRollerConveyor") {
     const count = Math.max(1, Math.round(numberChild(properties, "RollerCount", 1)));
@@ -1452,6 +2194,7 @@ function isRollerConveyorType(typeName: string): boolean {
   return (
     typeName === "e3d:StraightRollerConveyor" ||
     typeName === "e3d:CurveRollerConveyor" ||
+    typeName === "e3d:DiverterRollerConveyor" ||
     typeName === "e3d:InjectorRollerConveyor"
   );
 }

@@ -110,6 +110,7 @@
           const group = await createDemo3DThreeGroup(parsed, {
             three: THREE,
             renderProceduralBelts: true,
+            renderProceduralRacks: true,
             renderProceduralSupportStands: true,
             renderProceduralConveyorSides: true,
             renderProceduralPhotoEyes: true,
@@ -162,7 +163,8 @@
           status.value =
             `Rendered with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
             `(${stats.serializedRenderables} placed renderables, ` +
-            `${stats.proceduralBelts} belts, ${stats.proceduralSupportStands} support stands, ` +
+            `${stats.proceduralBelts} belts, ${stats.proceduralRacks} racks, ` +
+            `${stats.proceduralSupportStands} support stands, ` +
             `${stats.proceduralConveyorSides} side profiles, ${stats.proceduralPhotoEyes} photo eyes, ` +
             `${stats.proceduralRollers} fallback rollers, ${stats.proceduralMotors} motors, ` +
             `${stats.dimensions} dimensions, ` +

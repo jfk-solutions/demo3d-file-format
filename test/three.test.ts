@@ -205,6 +205,120 @@ describe("Three renderer adapter", () => {
     expect(((belt.material as three.Material[])[1] as three.MeshStandardMaterial).color.getHex()).toBe(0xc0c0c0);
   });
 
+  it("renders straight and curved belts that rely on serialized Demo3D defaults", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: defaultedBeltXmlFixture }]),
+      { parseXml }
+    );
+
+    const disabled = await createDemo3DThreeGroup(parsed, { three });
+    const enabled = await createDemo3DThreeGroup(parsed, { three, renderProceduralBelts: true });
+    const belts: three.Mesh[] = [];
+    enabled.traverse((object) => {
+      if (object.userData.demo3d?.kind === "procedural-belt") {
+        belts.push(object as three.Mesh);
+      }
+    });
+
+    expect(parsed.model.unknownTypes.has("e3d:CurveBeltConveyor")).toBe(false);
+    expect(disabled.userData.demo3d.stats.proceduralBelts).toBe(0);
+    expect(enabled.userData.demo3d.stats.proceduralBelts).toBe(3);
+    expect(enabled.userData.demo3d.warnings).toEqual([]);
+    expect(belts.map((belt) => belt.userData.demo3d.typeName)).toEqual([
+      "e3d:StraightBeltConveyor",
+      "e3d:CurveBeltConveyor",
+      "e3d:CurveBeltConveyor"
+    ]);
+
+    for (const belt of belts) {
+      belt.geometry.computeBoundingBox();
+      expect(belt.geometry.boundingBox?.min.y).toBeCloseTo(-0.06);
+      expect(belt.geometry.boundingBox?.max.y).toBeCloseTo(0);
+    }
+    expect(belts[0]?.geometry.boundingBox?.max.x).toBeCloseTo(0.6);
+    expect(belts[0]?.geometry.boundingBox?.min.z).toBeCloseTo(-0.25);
+    expect(belts[0]?.geometry.boundingBox?.max.z).toBeCloseTo(0.25);
+    expect(belts[1]?.geometry.boundingBox?.min.z).toBeCloseTo(-1);
+    expect(belts[1]?.geometry.boundingBox?.max.z).toBeCloseTo(0);
+    expect(belts[2]?.geometry.boundingBox?.min.z).toBeCloseTo(0);
+    expect(belts[2]?.geometry.boundingBox?.max.z).toBeCloseTo(1);
+  });
+
+  it("renders connector-shaped injector belts and split diverter rollers", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: diverterWithInjectorBeltXmlFixture }]),
+      { parseXml }
+    );
+    const group = await createDemo3DThreeGroup(parsed, {
+      three,
+      renderProceduralBelts: true,
+      renderProceduralRollers: true
+    });
+    const rollers: three.Object3D[] = [];
+    let belt: three.Mesh | undefined;
+    group.traverse((object) => {
+      if (object.userData.demo3d?.kind === "procedural-roller") {
+        rollers.push(object);
+      }
+      if (
+        object.userData.demo3d?.kind === "procedural-belt" &&
+        object.userData.demo3d?.typeName === "e3d:InjectorBeltConveyor"
+      ) {
+        belt = object as three.Mesh;
+      }
+    });
+
+    expect(parsed.model.unknownTypes.has("e3d:DiverterRollerConveyor")).toBe(false);
+    expect(parsed.model.unknownTypes.has("e3d:InjectorBeltConveyor")).toBe(false);
+    expect(group.userData.demo3d.stats.proceduralBelts).toBe(1);
+    expect(group.userData.demo3d.stats.proceduralRollers).toBe(32);
+    expect(group.userData.demo3d.warnings).toEqual([]);
+    expect(rollers).toHaveLength(32);
+    expect([...new Set(rollers.map((roller) => roller.position.z))]).toEqual([-0.125, 0.125]);
+    expect(rollers[0]?.position.x).toBeCloseTo(0.024645984);
+    expect(rollers[31]?.position.x).toBeCloseTo(0.76402551);
+    const beltBounds = new three.Box3().setFromObject(belt!);
+    expect(beltBounds.min.x).toBeCloseTo(0);
+    expect(beltBounds.max.x).toBeCloseTo(1.0219203);
+    expect(beltBounds.min.y).toBeCloseTo(-0.05);
+    expect(beltBounds.max.y).toBeCloseTo(0);
+    expect(beltBounds.min.z).toBeCloseTo(-0.27192032);
+    expect(beltBounds.max.z).toBeCloseTo(0.27192032);
+  });
+
+  it("renders rack frames from serialized rack dimensions and visibility", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: liftRackXmlFixture }]),
+      { parseXml }
+    );
+    const disabled = await createDemo3DThreeGroup(parsed, { three });
+    const enabled = await createDemo3DThreeGroup(parsed, { three, renderProceduralRacks: true });
+    let rack: three.Group | undefined;
+    enabled.traverse((object) => {
+      if (object.userData.demo3d?.kind === "procedural-rack") {
+        rack = object as three.Group;
+      }
+    });
+
+    expect(parsed.model.unknownTypes.has("e3d:RackVisual")).toBe(false);
+    expect(disabled.userData.demo3d.stats.proceduralRacks).toBe(0);
+    expect(enabled.userData.demo3d.stats.proceduralRacks).toBe(1);
+    expect(enabled.userData.demo3d.warnings).toEqual([]);
+    expect(rack?.children).toHaveLength(7);
+    expect(rack?.userData.demo3d.framePositions).toEqual([0]);
+    expect(rack?.userData.demo3d.strutHeights).toHaveLength(5);
+    expect(rack?.userData.demo3d.strutHeights[0]).toBeCloseTo(0.025);
+    expect(rack?.userData.demo3d.strutHeights[4]).toBeCloseTo(3.854);
+    const bounds = new three.Box3().setFromObject(rack!);
+    expect(bounds.min.x).toBeCloseTo(-0.025);
+    expect(bounds.max.x).toBeCloseTo(0.025);
+    expect(bounds.min.y).toBeCloseTo(0);
+    expect(bounds.max.y).toBeCloseTo(3.879);
+    expect(bounds.min.z).toBeCloseTo(-0.675);
+    expect(bounds.max.z).toBeCloseTo(0.675);
+    expect(((rack?.children[0] as three.Mesh).material as three.MeshStandardMaterial).color.getHex()).toBe(0xd3d3d3);
+  });
+
   it("renders profile-based support stands only when explicitly enabled", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: supportStandXmlFixture }]), {
       parseXml
@@ -231,6 +345,36 @@ describe("Three renderer adapter", () => {
       braceHeights: [0.4, 0.8]
     });
     expect(support?.userData.demo3d.supportHeight).toBeCloseTo(1.2);
+  });
+
+  it("renders support stands whose default profiles are omitted", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: defaultedSupportStandXmlFixture }]),
+      { parseXml }
+    );
+    const group = await createDemo3DThreeGroup(parsed, { three, renderProceduralSupportStands: true });
+    let support: three.Group | undefined;
+    group.traverse((object) => {
+      if (object.userData.demo3d?.kind === "procedural-support-stand") {
+        support = object as three.Group;
+      }
+    });
+
+    expect(group.userData.demo3d.stats.proceduralSupportStands).toBe(1);
+    expect(group.userData.demo3d.warnings).toEqual([]);
+    expect(support?.children).toHaveLength(8);
+    expect(support?.userData.demo3d).toMatchObject({
+      span: 0.556,
+      braceHeights: [0.5],
+      approximate: true,
+      defaultProfiles: true
+    });
+    expect(support?.userData.demo3d.supportHeight).toBeCloseTo(0.78);
+    const bounds = new three.Box3().setFromObject(support!);
+    expect(bounds.min.y).toBeCloseTo(-0.83);
+    expect(bounds.max.y).toBeCloseTo(-0.05);
+    expect(bounds.min.z).toBeCloseTo(-0.328);
+    expect(bounds.max.z).toBeCloseTo(0.328);
   });
 
   it("renders the remaining generated conveyor families behind explicit options", async () => {
@@ -574,6 +718,79 @@ const straightBeltXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </P>
     </e>
   </C>
+</e3d:Demo3DProject>`;
+
+const defaultedBeltXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:StraightBeltConveyor"><Id>straight</Id><N>Straight</N>
+      <P xsi:type="e3d:StraightBeltConveyorProperties"><BeltLength>0.6</BeltLength><Length>0.6</Length>
+        <SurfaceMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-8355712</Diffuse></MeshMaterial></SurfaceMaterial>
+        <SurfaceSideMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-4144960</Diffuse></MeshMaterial></SurfaceSideMaterial>
+      </P>
+    </e>
+    <e xsi:type="e3d:CurveBeltConveyor"><Id>left</Id><N>Left</N>
+      <P xsi:type="e3d:CurveBeltConveyorProperties"><Angle>-90</Angle><InnerRadius>0.5</InnerRadius><Width>0.5</Width></P>
+    </e>
+    <e xsi:type="e3d:CurveBeltConveyor"><Id>right</Id><N>Right</N>
+      <P xsi:type="e3d:CurveBeltConveyorProperties"><InnerRadius>0.5</InnerRadius><Width>0.5</Width></P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+const diverterWithInjectorBeltXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:DiverterRollerConveyor"><Id>divert</Id><N>Divert1</N>
+    <P xsi:type="e3d:DiverterRollerConveyorProperties">
+      <Length>0.7886714935302734</Length><NumRollersAcrossWidth>2</NumRollersAcrossWidth>
+      <RollerDiameter>0.035</RollerDiameter><RollerPitch>0.05</RollerPitch>
+      <RollerWidth>0.288325</RollerWidth><Width>0.5</Width>
+      <SurfaceMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-4144960</Diffuse></MeshMaterial></SurfaceMaterial>
+    </P>
+    <C><e xsi:type="e3d:InjectorBeltConveyor"><Id>belt</Id><N>Belt2</N>
+      <P xsi:type="e3d:InjectorBeltConveyorProperties">
+        <BeltDiameter>0.05</BeltDiameter><BeltLength>0.5</BeltLength><BeltWidth>0.5</BeltWidth>
+        <SurfaceMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-8355712</Diffuse></MeshMaterial></SurfaceMaterial>
+        <SurfaceSideMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-4144960</Diffuse></MeshMaterial></SurfaceSideMaterial>
+      </P>
+      <CN>
+        <e xsi:type="e3d:ConveyorConnector"><Name>Start</Name>
+          <Start>0.47807968||-0.27192032</Start><End>1.0219203||0.27192032</End>
+        </e>
+        <e xsi:type="e3d:ConveyorConnector"><Name>End</Name><Start>||0.25</Start><End>||-0.25</End></e>
+      </CN>
+    </e></C>
+  </e></C>
+</e3d:Demo3DProject>`;
+
+const liftRackXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:ContainerVisual"><Id>lift</Id><N>VerticalLift</N><P xsi:type="e3d:ContainerProperties" />
+    <C><e xsi:type="e3d:RackVisual"><Id>rack</Id><N>FrontRack</N>
+      <P xsi:type="e3d:RackProperties">
+        <BayDepth>0.6</BayDepth><BayWidth>0</BayWidth><ExtensionStrutOffset>0.025</ExtensionStrutOffset>
+        <FrameDepth>1.3</FrameDepth><FrameHeight>3.879</FrameHeight><InitialStrutHeight>0.025</InitialStrutHeight>
+        <LastFrame><Visible>0</Visible></LastFrame><MiddleFrames><Visible>0</Visible></MiddleFrames>
+        <MinFrameGap>0</MinFrameGap><NumBays>1</NumBays><StrutColor><name>LightGray</name></StrutColor>
+        <StrutSpanHeight>1.2</StrutSpanHeight><StrutWidth>0.05</StrutWidth>
+        <UprightColor><name>LightGray</name></UprightColor><UprightDepth>0.05</UprightDepth><UprightWidth>0.05</UprightWidth>
+      </P>
+    </e></C>
+  </e></C>
+</e3d:Demo3DProject>`;
+
+const defaultedSupportStandXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:StraightBeltConveyor"><Id>conveyor</Id><N>Conveyor</N>
+    <P xsi:type="e3d:StraightBeltConveyorProperties"><BeltLength>0.6</BeltLength></P>
+    <C><e xsi:type="e3d:SupportStand"><Id>support</Id><N>StartSupport</N>
+      <P xsi:type="e3d:SupportStandProperties">
+        <AddCrossBraceAtHeight><e xsi:type="xsd:double">0.5</e><e xsi:type="xsd:double">1</e><e xsi:type="xsd:double">1.5</e></AddCrossBraceAtHeight>
+        <ConveyorOffset>|-0.05|0.028</ConveyorOffset>
+        <FloorPlateHeight>0.01</FloorPlateHeight><FootHeight>0.21</FootHeight>
+        <LegMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-5658199</Diffuse></MeshMaterial></LegMaterial>
+        <FootMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-13676721</Diffuse></MeshMaterial></FootMaterial>
+        <FloorPlateMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-13676721</Diffuse></MeshMaterial></FloorPlateMaterial>
+        <CrossBraceMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-5658199</Diffuse></MeshMaterial></CrossBraceMaterial>
+      </P>
+    </e></C>
+  </e></C>
 </e3d:Demo3DProject>`;
 
 const missingMeshXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
