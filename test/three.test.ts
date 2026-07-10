@@ -100,6 +100,32 @@ describe("Three renderer adapter", () => {
     expect(renderable.userData.demo3d.aspectType).toBe("e3d:CylinderRendererAspect");
   });
 
+  it("assigns serialized material slots to mesh face subsets", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: multiMaterialMeshAspectXmlFixture }]),
+      { parseXml }
+    );
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    let renderable: three.Mesh | undefined;
+    group.traverse((object) => {
+      if (object.userData.demo3d?.renderableId === "subset-renderable") {
+        renderable = object as three.Mesh;
+      }
+    });
+
+    expect(group.userData.demo3d.stats.serializedRenderables).toBe(1);
+    expect(renderable).toBeDefined();
+    expect(renderable!.material).toBeInstanceOf(Array);
+    const materials = renderable!.material as three.MeshStandardMaterial[];
+    expect(materials).toHaveLength(2);
+    expect(materials.map((material) => material.color.getHex())).toEqual([0xff0000, 0x00ff00]);
+    expect(renderable!.geometry.groups).toEqual([
+      { start: 0, count: 3, materialIndex: 0 },
+      { start: 3, count: 3, materialIndex: 1 }
+    ]);
+  });
+
   it("does not render serialized aspects that Demo3D marks as disabled", async () => {
     const parsed = await parseDemo3D(
       createZip([{ name: "fixture.demo3d", data: disabledAspectXmlFixture }]),
@@ -570,6 +596,27 @@ const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </Renderables>
     </E>
   </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+const multiMaterialMeshAspectXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <MeshLibrary><Meshes><e xsi:type="e3d:DictionaryEntry">
+    <key xsi:type="e3d:MeshReference"><Id>subset-mesh</Id></key>
+    <val xsi:type="e3d:Mesh"><MeshData>
+      <MF xsi:type="Demo3D.Renderers.Meshes.MeshFormat">TriangleList</MF>
+      <V><VF xsi:type="Demo3D.Renderers.Meshes.VertexFormat">PositionNormal</VF><D>AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAAAA</D></V>
+      <I><IF xsi:type="Demo3D.Renderers.Meshes.IndexFormat">UInt16</IF><D>AAABAAIAAAACAAMA</D></I>
+      <A>AAE=</A>
+    </MeshData></val>
+  </e></Meshes></MeshLibrary>
+  <C><e xsi:type="e3d:Visual"><Id>subset-visual</Id><N>Subset mesh</N><AS><E>subset-aspect</E></AS></e></C>
+  <SerializedObjects><E xsi:type="e3d:MeshRendererAspect"><Id>subset-aspect</Id><Renderables><E>
+    <Id>subset-renderable</Id>
+    <MaterialProperties>
+      <e><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-65536</Diffuse></MeshMaterial></e>
+      <e><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-16711936</Diffuse></MeshMaterial></e>
+    </MaterialProperties>
+    <MeshReference><Id>subset-mesh</Id></MeshReference>
+  </E></Renderables></E></SerializedObjects>
 </e3d:Demo3DProject>`;
 
 const disabledAspectXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

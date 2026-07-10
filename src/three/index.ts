@@ -234,6 +234,7 @@ export function decodeDemo3DThreeGeometry(mesh: Demo3DMesh, three: ThreeModule):
   if (mesh.indices) {
     geometry.setIndex(new three.BufferAttribute(readIndexBuffer(mesh.indices, mesh.indexFormat), 1));
   }
+  addMeshSubsetGroups(geometry, mesh);
 
   convertTriangleGeometryToThreeCoordinates(geometry);
   if (!normals) {
@@ -242,6 +243,27 @@ export function decodeDemo3DThreeGeometry(mesh: Demo3DMesh, three: ThreeModule):
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
+}
+
+function addMeshSubsetGroups(geometry: Three.BufferGeometry, mesh: Demo3DMesh): void {
+  const subsets = mesh.auxiliary?.toUint8Array();
+  const drawCount = geometry.getIndex()?.count ?? geometry.getAttribute("position").count;
+  const faceCount = Math.floor(drawCount / 3);
+  if (!subsets || subsets.length !== faceCount || faceCount === 0) {
+    return;
+  }
+
+  let runStart = 0;
+  let materialIndex = subsets[0] ?? 0;
+  for (let face = 1; face <= faceCount; face += 1) {
+    const nextMaterialIndex = face < faceCount ? subsets[face] : undefined;
+    if (face < faceCount && nextMaterialIndex === materialIndex) {
+      continue;
+    }
+    geometry.addGroup(runStart * 3, (face - runStart) * 3, materialIndex);
+    runStart = face;
+    materialIndex = nextMaterialIndex ?? 0;
+  }
 }
 
 export function createDemo3DThreeMaterial(
@@ -359,7 +381,7 @@ function createVisualObject(
   }
 
   for (const ref of refs) {
-    const mesh = createMeshObject(ref, visual, visual.materials[0], state);
+    const mesh = createMeshObject(ref, visual, visual.materials, state);
     if (mesh) {
       if (mesh.userData.demo3d?.kind === "missing-geometry-placeholder") {
         placeholderObjects.push(mesh);
@@ -464,11 +486,13 @@ function createAspectRenderableObjects(visual: Demo3DVisual, state: RendererStat
     for (const renderable of renderables.children) {
       const meshIds = findMeshReferenceIds(renderable);
       for (const meshId of meshIds) {
-        const material = firstMaterial(renderable) ?? visual.materials[0];
+        const serializedMaterials = renderableMaterials(renderable);
+        const materials = serializedMaterials.length > 0 ? serializedMaterials : visual.materials;
+        const primaryMaterial = materials[0];
         const mesh = state.meshById.has(meshId)
-          ? createMeshObject(meshId, renderable, material, state)
-          : createPrimitiveRenderableObject(aspect, renderable, meshId, material, state) ??
-            createMeshObject(meshId, renderable, material, state);
+          ? createMeshObject(meshId, renderable, materials, state)
+          : createPrimitiveRenderableObject(aspect, renderable, meshId, primaryMaterial, state) ??
+            createMeshObject(meshId, renderable, materials, state);
         if (!mesh) {
           continue;
         }
@@ -2383,13 +2407,19 @@ function getDrawingBlockGeometry(blockId: string, state: RendererState): Three.B
   return geometry;
 }
 
+type Demo3DMaterialSelection = Demo3DMaterial | readonly Demo3DMaterial[] | undefined;
+
 function createMeshObject(
   meshId: string,
   source: Demo3DVisual | Demo3DXmlElement,
-  material: Demo3DMaterial | undefined,
+  materialSelection: Demo3DMaterialSelection,
   state: RendererState
 ): Three.Mesh | undefined {
   const mesh = state.meshById.get(meshId);
+  const materials = Array.isArray(materialSelection)
+    ? materialSelection as readonly Demo3DMaterial[]
+    : materialSelection ? [materialSelection as Demo3DMaterial] : [];
+  const primaryMaterial = materials[0];
   const sourceId = source instanceof Demo3DVisual ? source.id : source.textOf("Id");
   const sourceType = source instanceof Demo3DVisual ? source.typeName : source.xsiType ?? source.localName;
   const xmlPath = source instanceof Demo3DVisual ? source.xml.path : source.path;
@@ -2403,22 +2433,26 @@ function createMeshObject(
       xmlPath
     });
     return state.options.showPlaceholders === true
-      ? createPlaceholderMesh(sourceId ?? meshId, meshId, material, state)
+      ? createPlaceholderMesh(sourceId ?? meshId, meshId, primaryMaterial, state)
       : undefined;
   }
 
   const geometry = getGeometry(mesh, state);
   if (!geometry) {
     return state.options.showPlaceholders === true
-      ? createPlaceholderMesh(sourceId ?? meshId, meshId, material, state)
+      ? createPlaceholderMesh(sourceId ?? meshId, meshId, primaryMaterial, state)
       : undefined;
   }
 
-  const object = new state.three.Mesh(geometry, getMaterial(material, state));
+  const threeMaterial = materials.length > 1
+    ? materials.map((material) => getMaterial(material, state))
+    : getMaterial(primaryMaterial, state);
+  const object = new state.three.Mesh(geometry, threeMaterial);
   object.name = source instanceof Demo3DVisual ? source.displayName ?? meshId : meshId;
   object.userData.demo3d = {
     kind: "mesh",
     meshId,
+    materialSlots: materials.length,
     sourceId,
     sourceType,
     xmlPath
@@ -3054,8 +3088,7 @@ function createSerializedRenderableGroup(state: RendererState): Three.Group {
 
       const meshIds = findMeshReferenceIds(renderable);
       for (const meshId of meshIds) {
-        const material = firstMaterial(renderable);
-        const mesh = createMeshObject(meshId, renderable, material, state);
+        const mesh = createMeshObject(meshId, renderable, renderableMaterials(renderable), state);
         if (!mesh) {
           continue;
         }
@@ -3308,6 +3341,24 @@ function findVisualMeshReferenceIds(root: Demo3DXmlElement): string[] {
     }
   }
   return [...ids];
+}
+
+function renderableMaterials(renderable: Demo3DXmlElement): Demo3DMaterial[] {
+  const materials: Demo3DMaterial[] = [];
+  const materialProperties = renderable.child("MaterialProperties");
+  for (const entry of materialProperties?.children ?? []) {
+    const material = firstMaterial(entry);
+    if (material) {
+      materials.push(material);
+    }
+  }
+  if (materials.length === 0) {
+    const material = firstMaterial(renderable);
+    if (material) {
+      materials.push(material);
+    }
+  }
+  return materials;
 }
 
 function firstMaterial(root: Demo3DXmlElement): Demo3DMaterial | undefined {
