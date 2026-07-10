@@ -188,6 +188,93 @@ export const supportStandXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.
   </C>
 </e3d:Demo3DProject>`;
 
+export const generatedObjectsXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:StraightRollerConveyor">
+      <Id>conveyor-1</Id><N>Generated conveyor</N><LR>1|0|2|||</LR>
+      <P xsi:type="e3d:StraightRollerConveyorProperties">
+        <Length>2</Length><Width>0.5</Width><RollerWidth>0.5</RollerWidth>
+        <RollerDiameter>0.1</RollerDiameter><RollerPitch>0.25</RollerPitch><CenterVisible>0</CenterVisible>
+        <RollerColor>-8355712</RollerColor>
+        <LeftSide xsi:type="e3d:ConveyorSideProperties">
+          <SideVisible>1</SideVisible><Profile>${conveyorSideProfileXml("Left")}</Profile>
+        </LeftSide>
+        <RightSide xsi:type="e3d:ConveyorSideProperties">
+          <SideVisible>1</SideVisible><Profile>${conveyorSideProfileXml("Right")}</Profile>
+        </RightSide>
+        <MotorVisual><Type>e3d:ConveyorVisual</Type></MotorVisual>
+      </P>
+      <C>
+        <e xsi:type="e3d:PhotoEye">
+          <Id>photo-eye-1</Id><N>PE1</N><LR>0.6|0|0|||</LR>
+          <P xsi:type="e3d:SensorWithScriptProperties">
+            <BeamHeight>0.04</BeamHeight><BeamAngle>10</BeamAngle>
+            <BoxMaterial>-13676721</BoxMaterial><ClearedMaterial>-23296</ClearedMaterial>
+          </P>
+          <AS><E>sensor-aspect-1</E></AS>
+        </e>
+      </C>
+    </e>
+  </C>
+  <SerializedObjects>
+    <E xsi:type="e3d:SensorSymbolAspect"><Id>sensor-aspect-1</Id><SymbolSide>Left</SymbolSide></E>
+    <E xsi:type="e3d:DimensionAspect">
+      <Id>dimension-1</Id>
+      <ArrowsInside>1</ArrowsInside><Depth>0.02</Depth><FlipText>0</FlipText><LockDirection>1</LockDirection>
+      <StartPoint><Point>0|0|0</Point><Visual xsi:type="e3d:VisualReference"><Id>conveyor-1</Id></Visual></StartPoint>
+      <EndPoint><Point>2|0|0</Point><Visual xsi:type="e3d:VisualReference"><Id>conveyor-1</Id></Visual></EndPoint>
+      <DimensionDirection><Normal>1|0|0</Normal></DimensionDirection>
+      <ExtensionDirection><Normal>0|1|0</Normal></ExtensionDirection>
+      <Height>0.3</Height>
+      <Format>{0:0.##} {1}</Format><Unit xsi:type="e3d:DimensionUnit">Default</Unit>
+      <StartArrow>${dimensionArrowProfileXml()}</StartArrow><EndArrow>${dimensionArrowProfileXml()}</EndArrow>
+      <Material><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-65536</Diffuse></MeshMaterial></Material>
+    </E>
+  </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+export const annularCylinderXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:Visual"><Id>ring-visual</Id><N>Ring sector</N><AS><E>ring-aspect</E></AS></e></C>
+  <SerializedObjects>
+    <E xsi:type="e3d:CylinderRendererAspect"><Id>ring-aspect</Id><Renderables><E>
+      <Id>ring-renderable</Id><Length>0.2</Length><Radius>1</Radius><InnerRadius>0.75</InnerRadius>
+      <RadiusRatio>1</RadiusRatio><ConeRatio>1</ConeRatio><Slices>24</Slices><Angle>135</Angle><StartAngle>-90</StartAngle>
+      <MaterialProperties><e><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-16744448</Diffuse></MeshMaterial></e></MaterialProperties>
+      <MeshReference><Id>primitive-ring-template</Id></MeshReference>
+    </E></Renderables></E>
+  </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+export const rollerAspectConveyorXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:StraightRollerConveyor"><Id>conveyor-with-rollers</Id><N>Serialized rollers</N>
+    <P xsi:type="e3d:StraightRollerConveyorProperties"><Length>1</Length><RollerWidth>0.4</RollerWidth><RollerDiameter>0.05</RollerDiameter><RollerPitch>0.1</RollerPitch></P>
+    <C><e xsi:type="e3d:Visual"><Id>roller-1</Id><N>Roller</N><AS><E>roller-aspect</E></AS></e></C>
+  </e></C>
+  <SerializedObjects><E xsi:type="e3d:CylinderRendererAspect"><Id>roller-aspect</Id><Renderables><E>
+    <Length>0.4</Length><Radius>0.025</Radius><Slices>12</Slices><Angle>360</Angle>
+    <MeshReference><Id>primitive-cylinder-template</Id></MeshReference>
+  </E></Renderables></E></SerializedObjects>
+</e3d:Demo3DProject>`;
+
+function conveyorSideProfileXml(name: string): string {
+  return `<Name>${name}</Name><Polygons><e xsi:type="e3d:ExtrusionPolygon"><Points>
+    <e xsi:type="e3d:Vector2">-0.015|-0.08</e><e xsi:type="e3d:Vector2">0.015|-0.08</e>
+    <e xsi:type="e3d:Vector2">0.015|0</e><e xsi:type="e3d:Vector2">-0.015|0</e>
+  </Points><M>
+    <e xsi:type="e3d:MeshMaterial"><Diffuse>-8355712</Diffuse></e>
+    <e xsi:type="e3d:MeshMaterial"><Diffuse>-65536</Diffuse></e>
+    <e xsi:type="e3d:MeshMaterial"><Diffuse>-8355712</Diffuse></e>
+    <e xsi:type="e3d:MeshMaterial"><Diffuse>-8355712</Diffuse></e>
+  </M></e></Polygons><Anchor>0|0</Anchor>`;
+}
+
+function dimensionArrowProfileXml(): string {
+  return `<Name>Arrow</Name><Polygons><e xsi:type="e3d:ExtrusionPolygon"><Points>
+    <e xsi:type="e3d:Vector2"></e><e xsi:type="e3d:Vector2">0.04|-0.08</e>
+    <e xsi:type="e3d:Vector2">-0.04|-0.08</e>
+  </Points><M><e xsi:type="e3d:MeshMaterial"><Diffuse>-65536</Diffuse></e></M></e></Polygons><Anchor>0|0</Anchor>`;
+}
+
 function supportProfileXml(name: string, width: number, depth: number): string {
   const halfWidth = width / 2;
   const halfDepth = depth / 2;

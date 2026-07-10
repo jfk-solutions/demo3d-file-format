@@ -270,6 +270,142 @@ export class Demo3DSupportStand extends Demo3DVisual {
   }
 }
 
+export class Demo3DConveyorSideProperties extends Demo3DTypedObject {
+  get profile(): Demo3DExtrusionProfile | undefined {
+    return extrusionProfile(this.xml.child("Profile"));
+  }
+
+  get material(): Demo3DMaterial | undefined {
+    return firstTypedMaterial(this.xml.child("Material") ?? this.xml);
+  }
+
+  get height(): number {
+    return numberValue(this.xml.valueOf("Height")) ?? 0;
+  }
+
+  get width(): number {
+    return numberValue(this.xml.valueOf("Width")) ?? 0;
+  }
+
+  get step(): number {
+    return numberValue(this.xml.valueOf("Step")) ?? 0;
+  }
+
+  get visible(): boolean {
+    return booleanValue(this.xml.valueOf("SideVisible"), true);
+  }
+}
+
+export class Demo3DPhotoEyeProperties extends Demo3DTypedObject {
+  get beamHeight(): number {
+    return numberValue(this.xml.valueOf("BeamHeight")) ?? 0;
+  }
+
+  get beamAngle(): number {
+    return numberValue(this.xml.valueOf("BeamAngle")) ?? 0;
+  }
+
+  get boxMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("BoxMaterial"));
+  }
+
+  get clearedMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("ClearedMaterial"));
+  }
+
+  get blockedMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("BlockedMaterial"));
+  }
+
+  get disabledMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("DisabledMaterial"));
+  }
+}
+
+export class Demo3DPhotoEye extends Demo3DVisual {
+  private photoEyePropertiesCache?: Demo3DPhotoEyeProperties;
+
+  get photoEyeProperties(): Demo3DPhotoEyeProperties | undefined {
+    if (!this.properties) {
+      return undefined;
+    }
+    return this.photoEyePropertiesCache ??= new Demo3DPhotoEyeProperties(
+      this.properties.xsiType ?? "e3d:SensorWithScriptProperties",
+      this.properties
+    );
+  }
+}
+
+export class Demo3DDimensionPoint {
+  readonly point: readonly (number | undefined)[];
+  readonly visualId?: string;
+
+  constructor(public readonly xml: Demo3DXmlElement) {
+    this.point = parsePipeNumbers(xml.textOf("Point") ?? "");
+    this.visualId = xml.child("Visual")?.textOf("Id");
+  }
+}
+
+export class Demo3DDimensionAspect extends Demo3DTypedObject {
+  get start(): Demo3DDimensionPoint | undefined {
+    const point = this.xml.child("StartPoint");
+    return point ? new Demo3DDimensionPoint(point) : undefined;
+  }
+
+  get end(): Demo3DDimensionPoint | undefined {
+    const point = this.xml.child("EndPoint");
+    return point ? new Demo3DDimensionPoint(point) : undefined;
+  }
+
+  get dimensionDirection(): readonly (number | undefined)[] {
+    return parsePipeNumbers(this.xml.child("DimensionDirection")?.textOf("Normal") ?? "");
+  }
+
+  get extensionDirection(): readonly (number | undefined)[] {
+    return parsePipeNumbers(this.xml.child("ExtensionDirection")?.textOf("Normal") ?? "");
+  }
+
+  get height(): number {
+    return numberValue(this.xml.valueOf("Height")) ?? 0;
+  }
+
+  get depth(): number {
+    return numberValue(this.xml.valueOf("Depth")) ?? 0;
+  }
+
+  get arrowsInside(): boolean {
+    return booleanValue(this.xml.valueOf("ArrowsInside"), true);
+  }
+
+  get flipText(): boolean {
+    return booleanValue(this.xml.valueOf("FlipText"), false);
+  }
+
+  get lockDirection(): boolean {
+    return booleanValue(this.xml.valueOf("LockDirection"), false);
+  }
+
+  get format(): string | undefined {
+    return this.xml.textOf("Format");
+  }
+
+  get unit(): string | undefined {
+    return this.xml.textOf("Unit");
+  }
+
+  get startArrow(): Demo3DExtrusionProfile | undefined {
+    return extrusionProfile(this.xml.child("StartArrow"));
+  }
+
+  get endArrow(): Demo3DExtrusionProfile | undefined {
+    return extrusionProfile(this.xml.child("EndArrow"));
+  }
+
+  get material(): Demo3DMaterial | undefined {
+    return firstTypedMaterial(this.xml.child("Material") ?? this.xml);
+  }
+}
+
 export class Demo3DLayer extends Demo3DTypedObject {
   readonly color?: number;
   readonly visible: boolean;
@@ -550,6 +686,23 @@ function emptyXmlElement(localName: string): Demo3DXmlElement {
   return new Demo3DXmlElement(localName, localName, null, null, `/${localName}`, [], [], "", null, "");
 }
 
+function firstTypedMaterial(root: Demo3DXmlElement): Demo3DMaterial | undefined {
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) {
+      continue;
+    }
+    if (node.xsiType === "e3d:MeshMaterial") {
+      return new Demo3DMaterial(node.xsiType, node);
+    }
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]);
+    }
+  }
+  return undefined;
+}
+
 registerDemo3DType("e3d:Visual", Demo3DVisual);
 registerDemo3DType("e3d:Mesh", Demo3DMesh);
 registerDemo3DType("e3d:MeshMaterial", Demo3DMaterial);
@@ -558,6 +711,10 @@ registerDemo3DType("e3d:Vector2", Demo3DVector2);
 registerDemo3DType("e3d:ExtrusionPolygon", Demo3DExtrusionPolygon);
 registerDemo3DType("e3d:SupportStand", Demo3DSupportStand);
 registerDemo3DType("e3d:SupportStandProperties", Demo3DSupportStandProperties);
+registerDemo3DType("e3d:ConveyorSideProperties", Demo3DConveyorSideProperties);
+registerDemo3DType("e3d:SensorWithScriptProperties", Demo3DPhotoEyeProperties);
+registerDemo3DType("e3d:DimensionAspect", Demo3DDimensionAspect);
+registerDemo3DType("e3d:PhotoEye", Demo3DPhotoEye);
 
 for (const visualType of [
   "e3d:BoxTubeVisual",
@@ -568,7 +725,6 @@ for (const visualType of [
   "e3d:ImportedMeshVisual",
   "e3d:InjectorRollerConveyor",
   "e3d:LightVisual",
-  "e3d:PhotoEye",
   "e3d:PrimitivesVisual",
   "e3d:StraightBeltConveyor",
   "e3d:StraightRollerConveyor",

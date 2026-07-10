@@ -110,7 +110,13 @@
           const group = await createDemo3DThreeGroup(parsed, {
             three: THREE,
             renderProceduralBelts: true,
-            renderProceduralSupportStands: true
+            renderProceduralSupportStands: true,
+            renderProceduralConveyorSides: true,
+            renderProceduralPhotoEyes: true,
+            renderProceduralRollers: true,
+            renderProceduralMotors: true,
+            renderDimensions: true,
+            includeUnsupported: true
           });
 
           status.value = "Rendering...";
@@ -156,6 +162,9 @@
             `Rendered with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
             `(${stats.serializedRenderables} placed renderables, ` +
             `${stats.proceduralBelts} belts, ${stats.proceduralSupportStands} support stands, ` +
+            `${stats.proceduralConveyorSides} side profiles, ${stats.proceduralPhotoEyes} photo eyes, ` +
+            `${stats.proceduralRollers} fallback rollers, ${stats.proceduralMotors} motors, ` +
+            `${stats.dimensions} dimensions, ` +
             `${stats.materials} materials, ${stats.textures} textures).`;
         } catch (error) {
           window.__demo3dRenderResult = {

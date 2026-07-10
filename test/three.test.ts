@@ -6,7 +6,15 @@ import {
   decodeDemo3DThreeGeometry,
   createDemo3DThreeMaterial
 } from "../src/three/index.js";
-import { createZip, demo3dXmlFixture, parseXml, supportStandXmlFixture } from "./helpers.js";
+import {
+  annularCylinderXmlFixture,
+  createZip,
+  demo3dXmlFixture,
+  generatedObjectsXmlFixture,
+  parseXml,
+  rollerAspectConveyorXmlFixture,
+  supportStandXmlFixture
+} from "./helpers.js";
 
 describe("Three renderer adapter", () => {
   it("converts parsed Demo3D meshes into Three geometry", async () => {
@@ -192,6 +200,102 @@ describe("Three renderer adapter", () => {
     expect(support?.userData.demo3d.supportHeight).toBeCloseTo(1.2);
   });
 
+  it("renders the remaining generated conveyor families behind explicit options", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: generatedObjectsXmlFixture }]),
+      { parseXml }
+    );
+    const disabled = await createDemo3DThreeGroup(parsed, { three });
+    const enabled = await createDemo3DThreeGroup(parsed, {
+      three,
+      renderProceduralConveyorSides: true,
+      renderProceduralPhotoEyes: true,
+      renderProceduralRollers: true,
+      renderProceduralMotors: true,
+      renderDimensions: true
+    });
+    const stats = enabled.userData.demo3d.stats;
+    const generatedKinds = new Set<string>();
+    let conveyorSide: three.Mesh | undefined;
+    enabled.traverse((object) => {
+      const kind = object.userData.demo3d?.kind;
+      if (kind) {
+        generatedKinds.add(kind);
+      }
+      if (kind === "procedural-conveyor-side") {
+        conveyorSide = object as three.Mesh;
+      }
+    });
+
+    expect(disabled.userData.demo3d.stats.proceduralConveyorSides).toBe(0);
+    expect(disabled.userData.demo3d.stats.proceduralPhotoEyes).toBe(0);
+    expect(disabled.userData.demo3d.stats.proceduralRollers).toBe(0);
+    expect(disabled.userData.demo3d.stats.proceduralMotors).toBe(0);
+    expect(disabled.userData.demo3d.stats.dimensions).toBe(0);
+    expect(stats.proceduralConveyorSides).toBe(2);
+    expect(stats.proceduralPhotoEyes).toBe(1);
+    expect(stats.proceduralRollers).toBe(8);
+    expect(stats.proceduralMotors).toBe(1);
+    expect(stats.dimensions).toBe(1);
+    expect(generatedKinds.has("procedural-conveyor-side")).toBe(true);
+    expect(generatedKinds.has("procedural-photo-eye")).toBe(true);
+    expect(generatedKinds.has("procedural-roller")).toBe(true);
+    expect(generatedKinds.has("procedural-conveyor-motor")).toBe(true);
+    expect(generatedKinds.has("dimension")).toBe(true);
+    expect(Array.isArray(conveyorSide?.material)).toBe(true);
+    expect((conveyorSide?.material as three.Material[])).toHaveLength(4);
+    expect(conveyorSide?.geometry.groups.map((group) => group.materialIndex)).toEqual([0, 1, 2, 3, 0]);
+  });
+
+  it("does not duplicate rollers when serialized cylinder aspects exist", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: rollerAspectConveyorXmlFixture }]),
+      { parseXml }
+    );
+    const group = await createDemo3DThreeGroup(parsed, { three, renderProceduralRollers: true });
+
+    expect(group.userData.demo3d.stats.proceduralRollers).toBe(0);
+    expect(group.userData.demo3d.stats.serializedRenderables).toBe(1);
+  });
+
+  it("keeps InnerRadius holes in partial cylinder renderables", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: annularCylinderXmlFixture }]),
+      { parseXml }
+    );
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    let ring: three.Mesh | undefined;
+    group.traverse((object) => {
+      if (object.userData.demo3d?.renderableId === "ring-renderable") {
+        ring = object as three.Mesh;
+      }
+    });
+    const position = ring?.geometry.getAttribute("position");
+    const radii = Array.from({ length: position?.count ?? 0 }, (_, index) =>
+      Math.hypot(position!.getX(index), position!.getZ(index))
+    );
+
+    expect(ring).toBeDefined();
+    expect(position?.count).toBeGreaterThan(100);
+    expect(Math.min(...radii)).toBeCloseTo(0.75, 5);
+    expect(Math.max(...radii)).toBeCloseTo(1, 5);
+  });
+
+  it("diagnoses script visuals that do not contain reconstructable geometry", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: unreconstructableScriptVisualXmlFixture }]),
+      { parseXml }
+    );
+    const quiet = await createDemo3DThreeGroup(parsed, { three });
+    const diagnostic = await createDemo3DThreeGroup(parsed, { three, includeUnsupported: true });
+
+    expect(quiet.userData.demo3d.stats.unreconstructedProceduralVisuals).toBe(0);
+    expect(diagnostic.userData.demo3d.stats.unreconstructedProceduralVisuals).toBe(1);
+    expect(diagnostic.userData.demo3d.warnings).toEqual([
+      expect.objectContaining({ code: "DEMO3D_THREE_UNRECONSTRUCTABLE_SCRIPT_VISUAL" })
+    ]);
+  });
+
   it("renders Demo3D light visuals as Three lights", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: lightVisualXmlFixture }]), {
       parseXml
@@ -278,6 +382,12 @@ const alphaMaterialXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
       <Diffuse>16777215</Diffuse>
     </MeshMaterial></Material></P></e>
   </C>
+</e3d:Demo3DProject>`;
+
+const unreconstructableScriptVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="Vendor.GeneratedVisual"><Id>generated-1</Id><N>Vendor generated object</N>
+    <P xsi:type="Vendor.CustomScriptProperties"><ScriptName>BuildGeometry</ScriptName></P>
+  </e></C>
 </e3d:Demo3DProject>`;
 
 const bufferDrawingBlockXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

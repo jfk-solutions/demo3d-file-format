@@ -54,7 +54,12 @@ import { createDemo3DThreeGroup } from "demo3d-file-format/three";
 
 const group = await createDemo3DThreeGroup(parsed, {
   renderProceduralBelts: true,
-  renderProceduralSupportStands: true
+  renderProceduralSupportStands: true,
+  renderProceduralConveyorSides: true,
+  renderProceduralPhotoEyes: true,
+  renderProceduralRollers: true,
+  renderProceduralMotors: true,
+  renderDimensions: true
 });
 ```
 
@@ -65,6 +70,17 @@ serialized dimensions, cap types, and surface/side materials. It defaults to
 `renderProceduralSupportStands` reconstructs visible `SupportStand` instances
 from their serialized leg, foot, floor-plate, and cross-brace extrusion
 profiles. Geometry is cached by profile and dimensions. It defaults to `false`.
+
+The other procedural options reconstruct serialized conveyor side profiles,
+photo-eye bodies and beams, missing roller sets, approximate motor housings, and
+dimension annotations. Roller generation is automatically suppressed when a
+conveyor already contains serialized cylinder aspects. Cylinder aspects with an
+`InnerRadius` are rendered as hollow full or partial annular geometry. Every
+procedural option defaults to `false`.
+
+Set `includeUnsupported: true` to receive deduplicated warnings for
+script-generated visual types that contain neither serialized geometry nor the
+dimensions required for an independent reconstruction.
 
 ### WebGPU With WebGL Fallback
 

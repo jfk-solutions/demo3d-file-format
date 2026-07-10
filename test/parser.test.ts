@@ -1,13 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
+  Demo3DConveyorSideProperties,
+  Demo3DDimensionAspect,
   Demo3DExtrusionPolygon,
+  Demo3DPhotoEye,
   Demo3DSupportStand,
   Demo3DVector2,
   parseDemo3D,
   parseDemo3DXmlFast
 } from "../src/index.js";
 import { xmlDocumentToElement } from "../src/xml.js";
-import { createZip, demo3dXmlFixture, parseXml, supportStandXmlFixture } from "./helpers.js";
+import {
+  createZip,
+  demo3dXmlFixture,
+  generatedObjectsXmlFixture,
+  parseXml,
+  supportStandXmlFixture
+} from "./helpers.js";
 
 describe("parseDemo3D", () => {
   it("parses a Demo3D package into a typed object model", async () => {
@@ -72,6 +81,36 @@ describe("parseDemo3D", () => {
     expect(parsed.model.unknownTypes.has("e3d:SupportStand")).toBe(false);
     expect(parsed.model.unknownTypes.has("e3d:ExtrusionPolygon")).toBe(false);
     expect(parsed.model.unknownTypes.has("e3d:Vector2")).toBe(false);
+  });
+
+  it("extracts typed conveyor sides, photo eyes, and dimensions", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: generatedObjectsXmlFixture }]),
+      { parseXml }
+    );
+    const conveyor = parsed.model.visuals[0]!;
+    const leftSide = parsed.model.typedObjects.find(
+      (object) => object.typeName === "e3d:ConveyorSideProperties"
+    );
+    const photoEye = conveyor.children[0];
+    const dimension = parsed.model.typedObjects.find(
+      (object) => object.typeName === "e3d:DimensionAspect"
+    );
+
+    expect(leftSide).toBeInstanceOf(Demo3DConveyorSideProperties);
+    expect((leftSide as Demo3DConveyorSideProperties).profile?.polygons[0]?.points).toHaveLength(4);
+    expect(photoEye).toBeInstanceOf(Demo3DPhotoEye);
+    expect((photoEye as Demo3DPhotoEye).photoEyeProperties?.beamHeight).toBe(0.04);
+    expect(dimension).toBeInstanceOf(Demo3DDimensionAspect);
+    expect((dimension as Demo3DDimensionAspect).start?.visualId).toBe("conveyor-1");
+    expect((dimension as Demo3DDimensionAspect).end?.point).toEqual([2, 0, 0]);
+    expect((dimension as Demo3DDimensionAspect).arrowsInside).toBe(true);
+    expect((dimension as Demo3DDimensionAspect).unit).toBe("Default");
+    expect((dimension as Demo3DDimensionAspect).format).toBe("{0:0.##} {1}");
+    expect((dimension as Demo3DDimensionAspect).startArrow?.polygons[0]?.points).toHaveLength(3);
+    expect(parsed.model.unknownTypes.has("e3d:ConveyorSideProperties")).toBe(false);
+    expect(parsed.model.unknownTypes.has("e3d:SensorWithScriptProperties")).toBe(false);
+    expect(parsed.model.unknownTypes.has("e3d:DimensionAspect")).toBe(false);
   });
 
   it("builds the same object tree through fast and DOM XML parsing", () => {

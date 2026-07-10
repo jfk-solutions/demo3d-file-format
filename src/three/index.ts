@@ -1,11 +1,15 @@
 import type * as Three from "three";
 import {
+  Demo3DConveyorSideProperties,
+  Demo3DDimensionAspect,
+  Demo3DDimensionPoint,
   Demo3DExtrusionPolygon,
   Demo3DExtrusionProfile,
   Demo3DMaterial,
   Demo3DMesh,
   Demo3DPackage,
   Demo3DProject,
+  Demo3DPhotoEye,
   Demo3DResource,
   Demo3DSupportStand,
   Demo3DVisual
@@ -40,6 +44,11 @@ export interface Demo3DThreeRendererOptions {
   readonly renderText?: boolean;
   readonly renderProceduralBelts?: boolean;
   readonly renderProceduralSupportStands?: boolean;
+  readonly renderProceduralConveyorSides?: boolean;
+  readonly renderProceduralPhotoEyes?: boolean;
+  readonly renderProceduralRollers?: boolean;
+  readonly renderProceduralMotors?: boolean;
+  readonly renderDimensions?: boolean;
   readonly includeUnsupported?: boolean;
   readonly includeSerializedRenderables?: boolean;
   readonly maxSerializedRenderables?: number;
@@ -58,6 +67,12 @@ export interface Demo3DThreeStats {
   directVisuals: number;
   proceduralBelts: number;
   proceduralSupportStands: number;
+  proceduralConveyorSides: number;
+  proceduralPhotoEyes: number;
+  proceduralRollers: number;
+  proceduralMotors: number;
+  dimensions: number;
+  unreconstructedProceduralVisuals: number;
   imageVisuals: number;
   lights: number;
   missingGeometryPlaceholders: number;
@@ -98,6 +113,9 @@ interface RendererState {
   readonly lineGeometryCache: Map<string, Three.BufferGeometry>;
   readonly materialCache: Map<string, Three.Material>;
   readonly textureCache: Map<string, Three.Texture>;
+  readonly visualObjectById: Map<string, Three.Object3D>;
+  readonly renderableObjectTrees: WeakSet<Three.Object3D>;
+  readonly warnedGeneratedTypes: Set<string>;
   readonly defaultMaterial: Three.Material;
   readonly stats: Demo3DThreeStats;
 }
@@ -133,6 +151,14 @@ export async function createDemo3DThreeGroup(
 
   for (const visual of project.visuals) {
     root.add(createVisualObject(visual, state));
+  }
+
+  if (options.renderDimensions === true) {
+    root.updateWorldMatrix(true, true);
+    const dimensions = createDimensionGroup(state);
+    if (dimensions.children.length > 0) {
+      root.add(dimensions);
+    }
   }
 
   if (options.includeSerializedRenderables === true) {
@@ -265,6 +291,9 @@ function createState(
     lineGeometryCache: new Map(),
     materialCache: new Map(),
     textureCache: new Map(),
+    visualObjectById: new Map(),
+    renderableObjectTrees: new WeakSet(),
+    warnedGeneratedTypes: new Set(),
     defaultMaterial: createDemo3DThreeMaterial(undefined, three),
     stats: {
       groups: 0,
@@ -278,6 +307,12 @@ function createState(
       directVisuals: 0,
       proceduralBelts: 0,
       proceduralSupportStands: 0,
+      proceduralConveyorSides: 0,
+      proceduralPhotoEyes: 0,
+      proceduralRollers: 0,
+      proceduralMotors: 0,
+      dimensions: 0,
+      unreconstructedProceduralVisuals: 0,
       imageVisuals: 0,
       lights: 0,
       missingGeometryPlaceholders: 0,
@@ -362,12 +397,50 @@ function createVisualObject(
     localTransformText: visual.xml.textOf("LR"),
     layer
   };
-
-  for (const child of visual.children) {
-    object.add(createVisualObject(child, state, layer, visual));
+  if (visual.id) {
+    state.visualObjectById.set(visual.id, object);
   }
 
+  let containsRenderable = meshes.length > 0;
+  for (const child of visual.children) {
+    const childObject = createVisualObject(child, state, layer, visual);
+    object.add(childObject);
+    containsRenderable ||= state.renderableObjectTrees.has(childObject);
+  }
+  if (containsRenderable) {
+    state.renderableObjectTrees.add(object);
+  }
+  reportUnreconstructedProceduralVisual(visual, containsRenderable, state);
+
   return object;
+}
+
+function reportUnreconstructedProceduralVisual(
+  visual: Demo3DVisual,
+  containsRenderable: boolean,
+  state: RendererState
+): void {
+  if (
+    state.options.includeUnsupported !== true ||
+    !visual.properties?.xsiType?.endsWith("ScriptProperties") ||
+    visual.typeName === "e3d:PhotoEye" ||
+    containsRenderable
+  ) {
+    return;
+  }
+
+  state.stats.unreconstructedProceduralVisuals += 1;
+  if (state.warnedGeneratedTypes.has(visual.typeName)) {
+    return;
+  }
+  state.warnedGeneratedTypes.add(visual.typeName);
+  warn(state, {
+    code: "DEMO3D_THREE_UNRECONSTRUCTABLE_SCRIPT_VISUAL",
+    message: `${visual.typeName} has script properties but no serialized geometry or dimensions to reconstruct.`,
+    sourceId: visual.id,
+    sourceType: visual.typeName,
+    xmlPath: visual.xml.path
+  });
 }
 
 function createAspectRenderableObjects(visual: Demo3DVisual, state: RendererState): Three.Object3D[] {
@@ -509,6 +582,16 @@ function createDirectVisualObject(
     return state.options.renderProceduralSupportStands === true
       ? createSupportStandObject(visual, parentVisual, state)
       : undefined;
+  }
+
+  if (visual.typeName === "e3d:PhotoEye") {
+    return state.options.renderProceduralPhotoEyes === true
+      ? createPhotoEyeObject(visual, parentVisual, state)
+      : undefined;
+  }
+
+  if (isRollerConveyorType(visual.typeName)) {
+    return createProceduralRollerConveyorObject(visual, state);
   }
 
   const geometry = getDirectVisualGeometry(visual, state);
@@ -935,6 +1018,432 @@ function getSupportProfileGeometry(
   return geometry;
 }
 
+function createPhotoEyeObject(
+  visual: Demo3DVisual,
+  parentVisual: Demo3DVisual | undefined,
+  state: RendererState
+): Three.Group | undefined {
+  const photoEye = visual instanceof Demo3DPhotoEye
+    ? visual
+    : new Demo3DPhotoEye(visual.typeName, visual.xml);
+  const properties = photoEye.photoEyeProperties;
+  if (!properties) {
+    return undefined;
+  }
+  const parentWidth =
+    numberChildOptional(parentVisual?.properties, "RollerWidth") ??
+    numberChildOptional(parentVisual?.properties, "BeltWidth") ??
+    numberChildOptional(parentVisual?.properties, "Width") ??
+    0.5;
+  const sensorAspect = findVisualAspects(visual, state)
+    .find((aspect) => aspect.xsiType === "e3d:SensorSymbolAspect");
+  const symbolSide = sensorAspect?.textOf("SymbolSide")?.toLowerCase() ?? "right";
+  const side = symbolSide.includes("left") ? -1 : 1;
+  const beamThickness = Math.max(parentWidth / 150, 0.003);
+  const bodySize = Math.max(parentWidth / 16, 0.025);
+  const group = new state.three.Group();
+  group.name = `${visual.displayName ?? visual.id ?? "Photo eye"} geometry`;
+
+  const beamGeometry = cachedBoxGeometry(beamThickness, beamThickness, parentWidth, state);
+  const beam = new state.three.Mesh(beamGeometry, getColorMaterial(properties.clearedMaterial, state));
+  beam.name = "Photo eye beam";
+  beam.position.y = properties.beamHeight;
+  beam.rotation.x = degreesToRadians(properties.beamAngle);
+  beam.userData.demo3d = { kind: "photo-eye-beam" };
+  group.add(beam);
+
+  const bodyGeometry = cachedBoxGeometry(bodySize, bodySize, bodySize * 0.75, state);
+  const body = new state.three.Mesh(bodyGeometry, getColorMaterial(properties.boxMaterial, state));
+  body.name = "Photo eye body";
+  body.position.set(0, properties.beamHeight, side * (parentWidth / 2 + bodySize * 0.4));
+  body.userData.demo3d = { kind: "photo-eye-body", symbolSide };
+  group.add(body);
+
+  group.userData.demo3d = {
+    kind: "procedural-photo-eye",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    beamHeight: properties.beamHeight,
+    symbolSide
+  };
+  state.stats.groups += 1;
+  state.stats.meshes += 2;
+  state.stats.directVisuals += 1;
+  state.stats.proceduralPhotoEyes += 1;
+  return group;
+}
+
+function createProceduralRollerConveyorObject(
+  visual: Demo3DVisual,
+  state: RendererState
+): Three.Group | undefined {
+  if (
+    state.options.renderProceduralConveyorSides !== true &&
+    state.options.renderProceduralRollers !== true &&
+    state.options.renderProceduralMotors !== true
+  ) {
+    return undefined;
+  }
+  const properties = visual.properties;
+  if (!properties) {
+    return undefined;
+  }
+  const group = new state.three.Group();
+  group.name = `${visual.displayName ?? visual.id ?? "Roller conveyor"} generated geometry`;
+
+  if (state.options.renderProceduralConveyorSides === true) {
+    addConveyorSide(group, visual, properties.child("LeftSide"), "left", state);
+    addConveyorSide(group, visual, properties.child("RightSide"), "right", state);
+  }
+  if (
+    state.options.renderProceduralRollers === true &&
+    !visualTreeHasAspectType(visual, "e3d:CylinderRendererAspect", state)
+  ) {
+    addProceduralRollers(group, visual, state);
+  }
+  if (
+    state.options.renderProceduralMotors === true &&
+    properties.child("MotorVisual") &&
+    !hasRenderableMotorChild(visual, state)
+  ) {
+    addProceduralMotor(group, visual, state);
+  }
+
+  if (group.children.length === 0) {
+    return undefined;
+  }
+  group.userData.demo3d = {
+    kind: "procedural-roller-conveyor",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path
+  };
+  state.stats.groups += 1;
+  state.stats.directVisuals += 1;
+  return group;
+}
+
+type ConveyorSideName = "left" | "right";
+
+function addConveyorSide(
+  group: Three.Group,
+  visual: Demo3DVisual,
+  sideXml: Demo3DXmlElement | undefined,
+  sideName: ConveyorSideName,
+  state: RendererState
+): void {
+  if (!sideXml) {
+    return;
+  }
+  const side = new Demo3DConveyorSideProperties(
+    sideXml.xsiType ?? "e3d:ConveyorSideProperties",
+    sideXml
+  );
+  const profile = side.profile;
+  if (!side.visible || !profile) {
+    return;
+  }
+  const frames = conveyorSideFrames(visual, sideName);
+  if (frames.length < 2) {
+    return;
+  }
+  profile.polygons.forEach((polygon, index) => {
+    if (polygon.points.length < 3) {
+      return;
+    }
+    const geometry = getSweptProfileGeometry(profile, polygon, frames, state);
+    const materials = polygon.materials.length > 0
+      ? polygon.materials.map((material) => getMaterial(material, state))
+      : [side.material ? getMaterial(side.material, state) : state.defaultMaterial];
+    const mesh = new state.three.Mesh(geometry, materials.length === 1 ? materials[0] : materials);
+    mesh.name = `${sideName} conveyor side ${index + 1}`;
+    mesh.userData.demo3d = { kind: "procedural-conveyor-side", side: sideName };
+    group.add(mesh);
+    state.stats.meshes += 1;
+    state.stats.proceduralConveyorSides += 1;
+  });
+}
+
+interface SweepFrame {
+  readonly center: readonly [number, number, number];
+  readonly lateral: readonly [number, number, number];
+}
+
+function conveyorSideFrames(visual: Demo3DVisual, side: ConveyorSideName): SweepFrame[] {
+  const properties = visual.properties;
+  if (!properties) {
+    return [];
+  }
+  const width =
+    numberChildOptional(properties, "RollerWidth") ??
+    numberChildOptional(properties, "Width") ??
+    0.5;
+  if (visual.typeName === "e3d:CurveRollerConveyor") {
+    const innerRadius = numberChild(properties, "InnerRadius", 0.5);
+    const angle = degreesToRadians(numberChild(properties, "Angle", 90));
+    const segments = Math.max(4, Math.ceil(Math.abs(angle) / (Math.PI / 24)));
+    const pathRadius = side === "left" ? innerRadius : innerRadius + width;
+    const centerRadius = innerRadius + width / 2;
+    const frames: SweepFrame[] = [];
+    for (let index = 0; index <= segments; index += 1) {
+      const theta = angle * (index / segments);
+      frames.push({
+        center: [
+          pathRadius * Math.sin(theta),
+          0,
+          pathRadius * Math.cos(theta) - centerRadius
+        ],
+        lateral: [Math.sin(theta), 0, Math.cos(theta)]
+      });
+    }
+    return frames;
+  }
+
+  const length = visual.typeName === "e3d:InjectorRollerConveyor"
+    ? Math.max(
+        numberChild(properties, "ShortSideLength", 0),
+        numberChild(properties, "ExtraLength", 0),
+        numberChild(properties, "RollerPitch", 0.1)
+      )
+    : numberChild(properties, "Length", 1);
+  const z = (side === "left" ? -1 : 1) * width / 2;
+  return [
+    { center: [0, 0, z], lateral: [0, 0, 1] },
+    { center: [length, 0, z], lateral: [0, 0, 1] }
+  ];
+}
+
+function getSweptProfileGeometry(
+  profile: Demo3DExtrusionProfile,
+  polygon: Demo3DExtrusionPolygon,
+  frames: readonly SweepFrame[],
+  state: RendererState
+): Three.BufferGeometry {
+  const pointsKey = polygon.points.map((point) => `${point.x},${point.y}`).join(";");
+  const framesKey = frames
+    .map((frame) => `${frame.center.join(",")}/${frame.lateral.join(",")}`)
+    .join(";");
+  const key = `sweep:${profile.anchor.x},${profile.anchor.y}:${polygon.materials.length}:${pointsKey}:${framesKey}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const pointCount = polygon.points.length;
+  for (const frame of frames) {
+    for (const point of polygon.points) {
+      const lateral = point.x - profile.anchor.x;
+      const vertical = point.y - profile.anchor.y;
+      positions.push(
+        frame.center[0] + frame.lateral[0] * lateral,
+        frame.center[1] + vertical,
+        frame.center[2] + frame.lateral[2] * lateral
+      );
+    }
+  }
+  const groups: Array<{ start: number; count: number; materialIndex: number }> = [];
+  for (let point = 0; point < pointCount; point += 1) {
+    const start = indices.length;
+    for (let frame = 0; frame < frames.length - 1; frame += 1) {
+      const current = frame * pointCount;
+      const next = (frame + 1) * pointCount;
+      const following = (point + 1) % pointCount;
+      indices.push(
+        current + point,
+        next + point,
+        current + following,
+        current + following,
+        next + point,
+        next + following
+      );
+    }
+    groups.push({
+      start,
+      count: indices.length - start,
+      materialIndex: Math.min(point, Math.max(0, polygon.materials.length - 1))
+    });
+  }
+  const shapePoints = polygon.points.map(
+    (point) => new state.three.Vector2(point.x - profile.anchor.x, point.y - profile.anchor.y)
+  );
+  const capTriangles = state.three.ShapeUtils.triangulateShape(shapePoints, []);
+  const finalOffset = (frames.length - 1) * pointCount;
+  const capStart = indices.length;
+  for (const triangle of capTriangles) {
+    indices.push(triangle[2], triangle[1], triangle[0]);
+    indices.push(finalOffset + triangle[0], finalOffset + triangle[1], finalOffset + triangle[2]);
+  }
+
+  const geometry = new state.three.BufferGeometry();
+  geometry.setAttribute("position", new state.three.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  for (const group of groups) {
+    geometry.addGroup(group.start, group.count, group.materialIndex);
+  }
+  geometry.addGroup(capStart, indices.length - capStart, 0);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
+function addProceduralRollers(group: Three.Group, visual: Demo3DVisual, state: RendererState): void {
+  const properties = visual.properties;
+  if (!properties) {
+    return;
+  }
+  const width =
+    numberChildOptional(properties, "RollerWidth") ??
+    numberChildOptional(properties, "Width") ??
+    0.5;
+  const diameter = numberChild(properties, "RollerDiameter", 0.05);
+  const radius = diameter / 2;
+  const material = materialFromContainer(properties.child("SurfaceMaterial") ?? properties, state)
+    ?? getColorMaterial(numberChildOptional(properties, "RollerColor"), state);
+  const geometry = cachedRollerGeometry(radius, width, state);
+
+  if (visual.typeName === "e3d:CurveRollerConveyor") {
+    const count = Math.max(1, Math.round(numberChild(properties, "RollerCount", 1)));
+    const innerRadius = numberChild(properties, "InnerRadius", 0.5);
+    const angle = degreesToRadians(numberChild(properties, "Angle", 90));
+    const centerRadius = innerRadius + width / 2;
+    for (let index = 0; index < count; index += 1) {
+      const theta = count === 1 ? angle / 2 : angle * (index / (count - 1));
+      const roller = new state.three.Mesh(geometry, material);
+      roller.name = `Generated roller ${index + 1}`;
+      roller.position.set(
+        centerRadius * Math.sin(theta),
+        0,
+        centerRadius * Math.cos(theta) - centerRadius
+      );
+      roller.rotation.y = theta;
+      roller.userData.demo3d = { kind: "procedural-roller", index };
+      group.add(roller);
+      state.stats.meshes += 1;
+      state.stats.proceduralRollers += 1;
+    }
+    return;
+  }
+
+  const length = visual.typeName === "e3d:InjectorRollerConveyor"
+    ? Math.max(numberChild(properties, "ShortSideLength", 0), numberChild(properties, "RollerPitch", 0.1))
+    : numberChild(properties, "Length", 1);
+  const pitch = Math.max(numberChild(properties, "RollerPitch", diameter * 1.2), diameter);
+  const explicitCount = numberChildOptional(properties, "RollerCount");
+  const count = Math.max(1, Math.round(explicitCount ?? length / pitch));
+  for (let index = 0; index < count; index += 1) {
+    const roller = new state.three.Mesh(geometry, material);
+    roller.name = `Generated roller ${index + 1}`;
+    roller.position.x = ((index + 0.5) / count) * length;
+    roller.userData.demo3d = { kind: "procedural-roller", index };
+    group.add(roller);
+    state.stats.meshes += 1;
+    state.stats.proceduralRollers += 1;
+  }
+}
+
+function cachedRollerGeometry(radius: number, width: number, state: RendererState): Three.BufferGeometry {
+  const key = `roller:${radius}:${width}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const geometry = new state.three.CylinderGeometry(radius, radius, width, 16);
+  geometry.rotateX(Math.PI / 2);
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
+function addProceduralMotor(group: Three.Group, visual: Demo3DVisual, state: RendererState): void {
+  const properties = visual.properties;
+  if (!properties) {
+    return;
+  }
+  const width =
+    numberChildOptional(properties, "RollerWidth") ??
+    numberChildOptional(properties, "Width") ??
+    0.5;
+  const length = numberChildOptional(properties, "Length") ?? 0.2;
+  const diameter = numberChild(properties, "RollerDiameter", 0.05);
+  const size = Math.max(diameter * 1.6, 0.06);
+  const geometry = cachedBoxGeometry(size * 1.4, size, size, state);
+  const motor = new state.three.Mesh(geometry, getColorMaterial(0xff303840 | 0, state));
+  motor.name = "Generated conveyor motor";
+  motor.position.set(length * 0.75, -size / 2, width / 2 + size / 2);
+  motor.userData.demo3d = { kind: "procedural-conveyor-motor", approximate: true };
+  group.add(motor);
+  state.stats.meshes += 1;
+  state.stats.proceduralMotors += 1;
+}
+
+function visualTreeHasAspectType(visual: Demo3DVisual, typeName: string, state: RendererState): boolean {
+  const stack = [visual];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    if (findVisualAspects(current, state).some((aspect) => aspect.xsiType === typeName)) {
+      return true;
+    }
+    stack.push(...current.children);
+  }
+  return false;
+}
+
+function hasRenderableMotorChild(visual: Demo3DVisual, state: RendererState): boolean {
+  return visual.children.some((child) => {
+    const name = child.displayName?.toLowerCase() ?? "";
+    return (name.includes("motor") || name.includes("transmission")) && findVisualAspects(child, state).length > 0;
+  });
+}
+
+function materialFromContainer(
+  root: Demo3DXmlElement | undefined,
+  state?: RendererState
+): Three.Material | undefined {
+  if (!root || !state) {
+    return undefined;
+  }
+  const material = firstMaterial(root);
+  return material ? getMaterial(material, state) : undefined;
+}
+
+function cachedBoxGeometry(
+  width: number,
+  height: number,
+  depth: number,
+  state: RendererState
+): Three.BufferGeometry {
+  const key = `box:${width}:${height}:${depth}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const geometry = new state.three.BoxGeometry(width, height, depth);
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
+  return geometry;
+}
+
+function isRollerConveyorType(typeName: string): boolean {
+  return (
+    typeName === "e3d:StraightRollerConveyor" ||
+    typeName === "e3d:CurveRollerConveyor" ||
+    typeName === "e3d:InjectorRollerConveyor"
+  );
+}
+
 function createImportedImageObject(visual: Demo3DVisual, state: RendererState): Three.Mesh | undefined {
   const properties = visual.properties;
   if (!properties) {
@@ -1227,22 +1736,34 @@ function getPrimitiveGeometry(
   let geometry: Three.BufferGeometry | undefined;
   if (type === "e3d:CylinderRendererAspect") {
     const radius = numberChild(renderable, "Radius", 0.5);
+    const innerRadius = numberChild(renderable, "InnerRadius", 0);
     const radiusRatio = numberChild(renderable, "RadiusRatio", 1);
     const coneRatio = numberChild(renderable, "ConeRatio", 1);
     const length = numberChild(renderable, "Length", 1);
     const slices = Math.max(3, Math.round(numberChild(renderable, "Slices", 16)));
     const startAngle = degreesToRadians(numberChild(renderable, "StartAngle", 0));
     const angle = degreesToRadians(numberChild(renderable, "Angle", 360));
-    geometry = new state.three.CylinderGeometry(
-      radius * radiusRatio,
-      radius * coneRatio,
-      length,
-      slices,
-      1,
-      false,
-      startAngle,
-      angle
-    );
+    geometry = innerRadius > 0 && innerRadius < Math.min(radius * radiusRatio, radius * coneRatio)
+      ? createAnnularCylinderGeometry(
+          radius * radiusRatio,
+          radius * coneRatio,
+          innerRadius,
+          length,
+          slices,
+          startAngle,
+          angle,
+          state
+        )
+      : new state.three.CylinderGeometry(
+          radius * radiusRatio,
+          radius * coneRatio,
+          length,
+          slices,
+          1,
+          false,
+          startAngle,
+          angle
+        );
   } else if (type === "e3d:BoxRendererAspect") {
     geometry = new state.three.BoxGeometry(
       numberChild(renderable, "Width", 1),
@@ -1269,12 +1790,110 @@ function getPrimitiveGeometry(
   return geometry;
 }
 
+function createAnnularCylinderGeometry(
+  topRadius: number,
+  bottomRadius: number,
+  innerRadius: number,
+  length: number,
+  slices: number,
+  startAngle: number,
+  angle: number,
+  state: RendererState
+): Three.BufferGeometry {
+  type Point3 = readonly [number, number, number];
+  const positions: number[] = [];
+  const halfLength = length / 2;
+  const fullCircle = Math.abs(angle) >= Math.PI * 2 - 1e-6;
+  const segments = Math.max(1, Math.round(slices * Math.abs(angle) / (Math.PI * 2)));
+  const point = (radius: number, y: number, theta: number): Point3 => [
+    radius * Math.cos(theta),
+    y,
+    radius * Math.sin(theta)
+  ];
+  const addTriangle = (a: Point3, b: Point3, c: Point3, normal: Point3): void => {
+    const abx = b[0] - a[0];
+    const aby = b[1] - a[1];
+    const abz = b[2] - a[2];
+    const acx = c[0] - a[0];
+    const acy = c[1] - a[1];
+    const acz = c[2] - a[2];
+    const crossX = aby * acz - abz * acy;
+    const crossY = abz * acx - abx * acz;
+    const crossZ = abx * acy - aby * acx;
+    const forward = crossX * normal[0] + crossY * normal[1] + crossZ * normal[2] >= 0;
+    const second = forward ? b : c;
+    const third = forward ? c : b;
+    positions.push(...a, ...second, ...third);
+  };
+  const addQuad = (a: Point3, b: Point3, c: Point3, d: Point3, normal: Point3): void => {
+    addTriangle(a, b, c, normal);
+    addTriangle(a, c, d, normal);
+  };
+
+  for (let segment = 0; segment < segments; segment += 1) {
+    const theta0 = startAngle + angle * (segment / segments);
+    const theta1 = startAngle + angle * ((segment + 1) / segments);
+    const middle = (theta0 + theta1) / 2;
+    const outerBottom0 = point(bottomRadius, -halfLength, theta0);
+    const outerBottom1 = point(bottomRadius, -halfLength, theta1);
+    const outerTop0 = point(topRadius, halfLength, theta0);
+    const outerTop1 = point(topRadius, halfLength, theta1);
+    const innerBottom0 = point(innerRadius, -halfLength, theta0);
+    const innerBottom1 = point(innerRadius, -halfLength, theta1);
+    const innerTop0 = point(innerRadius, halfLength, theta0);
+    const innerTop1 = point(innerRadius, halfLength, theta1);
+
+    addQuad(
+      outerBottom0,
+      outerBottom1,
+      outerTop1,
+      outerTop0,
+      [Math.cos(middle), 0, Math.sin(middle)]
+    );
+    addQuad(
+      innerBottom0,
+      innerTop0,
+      innerTop1,
+      innerBottom1,
+      [-Math.cos(middle), 0, -Math.sin(middle)]
+    );
+    addQuad(outerTop0, outerTop1, innerTop1, innerTop0, [0, 1, 0]);
+    addQuad(outerBottom0, innerBottom0, innerBottom1, outerBottom1, [0, -1, 0]);
+  }
+
+  if (!fullCircle) {
+    const direction = Math.sign(angle) || 1;
+    const endAngle = startAngle + angle;
+    addQuad(
+      point(innerRadius, -halfLength, startAngle),
+      point(innerRadius, halfLength, startAngle),
+      point(topRadius, halfLength, startAngle),
+      point(bottomRadius, -halfLength, startAngle),
+      [direction * Math.sin(startAngle), 0, -direction * Math.cos(startAngle)]
+    );
+    addQuad(
+      point(innerRadius, -halfLength, endAngle),
+      point(bottomRadius, -halfLength, endAngle),
+      point(topRadius, halfLength, endAngle),
+      point(innerRadius, halfLength, endAngle),
+      [-direction * Math.sin(endAngle), 0, direction * Math.cos(endAngle)]
+    );
+  }
+
+  const geometry = new state.three.BufferGeometry();
+  geometry.setAttribute("position", new state.three.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function primitiveGeometryKey(type: string | null, renderable: Demo3DXmlElement): string {
   const fields = [
     "Angle",
     "ConeRatio",
+    "CurveRadius",
     "Depth",
     "Height",
+    "InnerRadius",
     "Length",
     "Radius",
     "RadiusRatio",
@@ -1716,6 +2335,165 @@ function positionSerializedPreviewMesh(mesh: Three.Mesh, index: number): void {
 
   mesh.scale.setScalar(scale);
   mesh.position.set(gridX - center.x * scale, -center.y * scale, gridZ - center.z * scale);
+}
+
+function createDimensionGroup(state: RendererState): Three.Group {
+  const group = new state.three.Group();
+  group.name = "Demo3D dimensions";
+  for (const xml of state.serializedObjectById.values()) {
+    if (xml.xsiType !== "e3d:DimensionAspect") {
+      continue;
+    }
+    const dimension = createDimensionObject(new Demo3DDimensionAspect(xml.xsiType, xml), state);
+    if (dimension) {
+      group.add(dimension);
+    }
+  }
+  if (group.children.length > 0) {
+    group.userData.demo3d = { kind: "dimensions" };
+    state.stats.groups += 1;
+  }
+  return group;
+}
+
+function createDimensionObject(
+  dimension: Demo3DDimensionAspect,
+  state: RendererState
+): Three.Group | undefined {
+  const start = dimensionPointToWorld(dimension.start, state);
+  const end = dimensionPointToWorld(dimension.end, state);
+  if (!start || !end) {
+    return undefined;
+  }
+  const extensionValues = dimension.extensionDirection;
+  const extension = new state.three.Vector3(
+    extensionValues[0] ?? 0,
+    extensionValues[1] ?? 1,
+    -(extensionValues[2] ?? 0)
+  );
+  if (extension.lengthSq() === 0) {
+    extension.set(0, 1, 0);
+  }
+  extension.normalize().multiplyScalar(dimension.height);
+  const lineStart = start.clone().add(extension);
+  const lineEnd = end.clone().add(extension);
+  const positions: number[] = [];
+  pushVectorLine(positions, start, lineStart);
+  pushVectorLine(positions, end, lineEnd);
+  pushVectorLine(positions, lineStart, lineEnd);
+
+  const direction = lineEnd.clone().sub(lineStart);
+  const distance = direction.length();
+  if (distance > 0) {
+    direction.normalize();
+    const normal = extension.clone().normalize();
+    const perpendicular = new state.three.Vector3().crossVectors(direction, normal);
+    if (perpendicular.lengthSq() === 0) {
+      perpendicular.set(0, 0, 1);
+    }
+    perpendicular.normalize();
+    const startArrow = dimensionArrowSize(dimension.startArrow, distance);
+    const endArrow = dimensionArrowSize(dimension.endArrow, distance);
+    const startDirection = dimension.arrowsInside ? direction : direction.clone().negate();
+    const endDirection = dimension.arrowsInside ? direction.clone().negate() : direction;
+    addDimensionArrow(positions, lineStart, startDirection, perpendicular, startArrow.length, startArrow.width);
+    addDimensionArrow(positions, lineEnd, endDirection, perpendicular, endArrow.length, endArrow.width);
+  }
+
+  const geometry = new state.three.BufferGeometry();
+  geometry.setAttribute("position", new state.three.Float32BufferAttribute(positions, 3));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  const object = new state.three.Group();
+  const lines = new state.three.LineSegments(geometry, getLineMaterial(dimension.material, state));
+  lines.name = "Dimension lines";
+  object.add(lines);
+
+  if (distance > 0) {
+    const label = distance.toFixed(3);
+    const color = demo3dColorToHex(dimension.material?.diffuse ?? -16777216);
+    const lineHeight = clamp(distance * 0.035, 0.025, 0.12);
+    const text = canUseCanvas()
+      ? createCanvasTextMesh(label, lineHeight, color, false, state)
+      : createFallbackTextMesh(label, lineHeight, dimension.material, state);
+    text.position.copy(lineStart).lerp(lineEnd, 0.5).add(extension.clone().normalize().multiplyScalar(lineHeight));
+    text.name = `Dimension ${label}`;
+    object.add(text);
+    state.stats.meshes += 1;
+  }
+
+  object.name = dimension.id ?? "Dimension";
+  object.userData.demo3d = {
+    kind: "dimension",
+    id: dimension.id,
+    distance,
+    unit: dimension.unit,
+    format: dimension.format,
+    arrowsInside: dimension.arrowsInside,
+    flipText: dimension.flipText,
+    lockDirection: dimension.lockDirection,
+    depth: dimension.depth,
+    xmlPath: dimension.xml.path
+  };
+  state.stats.geometries += 1;
+  state.stats.lines += positions.length / 6;
+  state.stats.groups += 1;
+  state.stats.dimensions += 1;
+  return object;
+}
+
+function dimensionArrowSize(
+  profile: Demo3DExtrusionProfile | undefined,
+  distance: number
+): { readonly length: number; readonly width: number } {
+  const points = profile?.polygons.flatMap((polygon) => polygon.points) ?? [];
+  const anchorX = profile?.anchor.x ?? 0;
+  const anchorY = profile?.anchor.y ?? 0;
+  const profileLength = points.reduce(
+    (largest, point) => Math.max(largest, Math.abs(point.y - anchorY)),
+    0
+  );
+  const profileWidth = points.reduce(
+    (largest, point) => Math.max(largest, Math.abs(point.x - anchorX)),
+    0
+  );
+  const fallbackLength = clamp(distance * 0.04, 0.02, 0.08);
+  const length = profileLength > 0 ? Math.min(profileLength, distance * 0.25) : fallbackLength;
+  const width = profileWidth > 0 ? Math.min(profileWidth, distance * 0.125) : length * 0.45;
+  return { length, width };
+}
+
+function dimensionPointToWorld(
+  point: Demo3DDimensionPoint | undefined,
+  state: RendererState
+): Three.Vector3 | undefined {
+  if (!point) {
+    return undefined;
+  }
+  const local = new state.three.Vector3(
+    point.point[0] ?? 0,
+    point.point[1] ?? 0,
+    -(point.point[2] ?? 0)
+  );
+  const visual = point.visualId ? state.visualObjectById.get(point.visualId) : undefined;
+  return visual ? visual.localToWorld(local) : local;
+}
+
+function pushVectorLine(positions: number[], start: Three.Vector3, end: Three.Vector3): void {
+  positions.push(start.x, start.y, start.z, end.x, end.y, end.z);
+}
+
+function addDimensionArrow(
+  positions: number[],
+  tip: Three.Vector3,
+  direction: Three.Vector3,
+  perpendicular: Three.Vector3,
+  length: number,
+  width: number
+): void {
+  const base = tip.clone().addScaledVector(direction, length);
+  pushVectorLine(positions, tip, base.clone().addScaledVector(perpendicular, width));
+  pushVectorLine(positions, tip, base.clone().addScaledVector(perpendicular, -width));
 }
 
 function createPlaceholderMesh(
