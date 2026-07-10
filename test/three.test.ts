@@ -272,6 +272,26 @@ describe("Three renderer adapter", () => {
     expect(group.userData.demo3d.stats.serializedRenderables).toBe(1);
   });
 
+  it("does not mistake curved side-guide cylinders for serialized rollers", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: curveWithSideGuideCylinderXmlFixture }]),
+      { parseXml }
+    );
+    const group = await createDemo3DThreeGroup(parsed, { three, renderProceduralRollers: true });
+    const rollers: three.Object3D[] = [];
+    group.traverse((object) => {
+      if (object.userData.demo3d?.kind === "procedural-roller") {
+        rollers.push(object);
+      }
+    });
+
+    expect(group.userData.demo3d.stats.proceduralRollers).toBe(9);
+    expect(group.userData.demo3d.stats.serializedRenderables).toBe(1);
+    expect(Math.min(...rollers.map((roller) => roller.position.x))).toBeGreaterThan(0.7);
+    expect(Math.max(...rollers.map((roller) => roller.position.z))).toBeCloseTo(0);
+    expect(Math.min(...rollers.map((roller) => roller.position.z))).toBeLessThan(-0.7);
+  });
+
   it("keeps InnerRadius holes in partial cylinder renderables", async () => {
     const parsed = await parseDemo3D(
       createZip([{ name: "fixture.demo3d", data: annularCylinderXmlFixture }]),
@@ -293,6 +313,8 @@ describe("Three renderer adapter", () => {
     expect(position?.count).toBeGreaterThan(100);
     expect(Math.min(...radii)).toBeCloseTo(0.75, 5);
     expect(Math.max(...radii)).toBeCloseTo(1, 5);
+    expect(Math.max(...Array.from({ length: position?.count ?? 0 }, (_, index) => position!.getZ(index))))
+      .toBeLessThan(0.000001);
   });
 
   it("diagnoses script visuals that do not contain reconstructable geometry", async () => {
@@ -397,6 +419,19 @@ const disabledAspectXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.or
       </E></Renderables>
     </E>
   </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+const curveWithSideGuideCylinderXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:CurveRollerConveyor"><Id>curve-1</Id><N>A-1060</N>
+    <P xsi:type="e3d:CurveRollerConveyorProperties"><Angle>-45</Angle><InnerRadius>0.825</InnerRadius>
+      <Width>0.42</Width><RollerWidth>0.42</RollerWidth><RollerCount>9</RollerCount><RollerDiameter>0.05</RollerDiameter>
+    </P>
+    <C><e xsi:type="e3d:Visual"><Id>side-guide</Id><N>SideGuideVisual</N><AS><E>side-guide-aspect</E></AS></e></C>
+  </e></C>
+  <SerializedObjects><E xsi:type="e3d:CylinderRendererAspect"><Id>side-guide-aspect</Id><Renderables><E>
+    <Length>0.03</Length><Radius>1.26</Radius><InnerRadius>1.245</InnerRadius><Slices>24</Slices>
+    <StartAngle>-45</StartAngle><Angle>45</Angle><MeshReference><Id>side-guide-template</Id></MeshReference>
+  </E></Renderables></E></SerializedObjects>
 </e3d:Demo3DProject>`;
 
 const alphaMaterialXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

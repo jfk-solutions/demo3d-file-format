@@ -1099,7 +1099,7 @@ function createProceduralRollerConveyorObject(
   }
   if (
     state.options.renderProceduralRollers === true &&
-    !visualTreeHasAspectType(visual, "e3d:CylinderRendererAspect", state)
+    !hasSerializedRollerGeometry(visual, state)
   ) {
     addProceduralRollers(group, visual, state);
   }
@@ -1186,17 +1186,16 @@ function conveyorSideFrames(visual: Demo3DVisual, side: ConveyorSideName): Sweep
     const angle = degreesToRadians(numberChild(properties, "Angle", 90));
     const segments = Math.max(4, Math.ceil(Math.abs(angle) / (Math.PI / 24)));
     const pathRadius = side === "left" ? innerRadius : innerRadius + width;
-    const centerRadius = innerRadius + width / 2;
     const frames: SweepFrame[] = [];
     for (let index = 0; index <= segments; index += 1) {
-      const theta = angle * (index / segments);
+      const theta = angle * (1 - index / segments);
       frames.push({
         center: [
-          pathRadius * Math.sin(theta),
+          pathRadius * Math.cos(theta),
           0,
-          pathRadius * Math.cos(theta) - centerRadius
+          pathRadius * Math.sin(theta)
         ],
-        lateral: [Math.sin(theta), 0, Math.cos(theta)]
+        lateral: [Math.cos(theta), 0, Math.sin(theta)]
       });
     }
     return frames;
@@ -1315,15 +1314,15 @@ function addProceduralRollers(group: Three.Group, visual: Demo3DVisual, state: R
     const angle = degreesToRadians(numberChild(properties, "Angle", 90));
     const centerRadius = innerRadius + width / 2;
     for (let index = 0; index < count; index += 1) {
-      const theta = count === 1 ? angle / 2 : angle * (index / (count - 1));
+      const theta = count === 1 ? angle / 2 : angle * (1 - index / (count - 1));
       const roller = new state.three.Mesh(geometry, material);
       roller.name = `Generated roller ${index + 1}`;
       roller.position.set(
-        centerRadius * Math.sin(theta),
+        centerRadius * Math.cos(theta),
         0,
-        centerRadius * Math.cos(theta) - centerRadius
+        centerRadius * Math.sin(theta)
       );
-      roller.rotation.y = theta;
+      roller.rotation.y = Math.PI / 2 - theta;
       roller.userData.demo3d = { kind: "procedural-roller", index };
       group.add(roller);
       state.stats.meshes += 1;
@@ -1386,14 +1385,20 @@ function addProceduralMotor(group: Three.Group, visual: Demo3DVisual, state: Ren
   state.stats.proceduralMotors += 1;
 }
 
-function visualTreeHasAspectType(visual: Demo3DVisual, typeName: string, state: RendererState): boolean {
-  const stack = [visual];
+function hasSerializedRollerGeometry(visual: Demo3DVisual, state: RendererState): boolean {
+  const stack = [...visual.children];
   while (stack.length > 0) {
     const current = stack.pop();
     if (!current) {
       continue;
     }
-    if (findVisualAspects(current, state).some((aspect) => aspect.xsiType === typeName)) {
+    const displayName = current.displayName?.toLowerCase() ?? "";
+    const propertyType = current.properties?.textOf("Type")?.toLowerCase() ?? "";
+    const isRoller = propertyType === "displayroller" || /^roller(?:\d+)?$/.test(displayName);
+    if (
+      isRoller &&
+      findVisualAspects(current, state).some((aspect) => aspect.xsiType === "e3d:CylinderRendererAspect")
+    ) {
       return true;
     }
     stack.push(...current.children);
@@ -1806,9 +1811,9 @@ function createAnnularCylinderGeometry(
   const fullCircle = Math.abs(angle) >= Math.PI * 2 - 1e-6;
   const segments = Math.max(1, Math.round(slices * Math.abs(angle) / (Math.PI * 2)));
   const point = (radius: number, y: number, theta: number): Point3 => [
-    radius * Math.cos(theta),
+    radius * Math.sin(theta),
     y,
-    radius * Math.sin(theta)
+    radius * Math.cos(theta)
   ];
   const addTriangle = (a: Point3, b: Point3, c: Point3, normal: Point3): void => {
     const abx = b[0] - a[0];
@@ -1848,14 +1853,14 @@ function createAnnularCylinderGeometry(
       outerBottom1,
       outerTop1,
       outerTop0,
-      [Math.cos(middle), 0, Math.sin(middle)]
+      [Math.sin(middle), 0, Math.cos(middle)]
     );
     addQuad(
       innerBottom0,
       innerTop0,
       innerTop1,
       innerBottom1,
-      [-Math.cos(middle), 0, -Math.sin(middle)]
+      [-Math.sin(middle), 0, -Math.cos(middle)]
     );
     addQuad(outerTop0, outerTop1, innerTop1, innerTop0, [0, 1, 0]);
     addQuad(outerBottom0, innerBottom0, innerBottom1, outerBottom1, [0, -1, 0]);
@@ -1869,14 +1874,14 @@ function createAnnularCylinderGeometry(
       point(innerRadius, halfLength, startAngle),
       point(topRadius, halfLength, startAngle),
       point(bottomRadius, -halfLength, startAngle),
-      [direction * Math.sin(startAngle), 0, -direction * Math.cos(startAngle)]
+      [-direction * Math.cos(startAngle), 0, direction * Math.sin(startAngle)]
     );
     addQuad(
       point(innerRadius, -halfLength, endAngle),
       point(bottomRadius, -halfLength, endAngle),
       point(topRadius, halfLength, endAngle),
       point(innerRadius, halfLength, endAngle),
-      [-direction * Math.sin(endAngle), 0, direction * Math.cos(endAngle)]
+      [direction * Math.cos(endAngle), 0, -direction * Math.sin(endAngle)]
     );
   }
 
