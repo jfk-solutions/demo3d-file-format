@@ -53,13 +53,18 @@ subpath:
 import { createDemo3DThreeGroup } from "demo3d-file-format/three";
 
 const group = await createDemo3DThreeGroup(parsed, {
-  renderProceduralBelts: true
+  renderProceduralBelts: true,
+  renderProceduralSupportStands: true
 });
 ```
 
 `renderProceduralBelts` reconstructs `StraightBeltConveyor` surfaces from their
 serialized dimensions, cap types, and surface/side materials. It defaults to
 `false`.
+
+`renderProceduralSupportStands` reconstructs visible `SupportStand` instances
+from their serialized leg, foot, floor-plate, and cross-brace extrusion
+profiles. Geometry is cached by profile and dimensions. It defaults to `false`.
 
 ### WebGPU With WebGL Fallback
 

@@ -77,6 +77,14 @@ export class Demo3DMaterial extends Demo3DTypedObject {
     return numberValue(this.xml.valueOf("Diffuse"));
   }
 
+  get reflectivity(): number | undefined {
+    return numberValue(this.xml.valueOf("Reflectivity"));
+  }
+
+  get transparency(): number | undefined {
+    return numberValue(this.xml.valueOf("Transparency"));
+  }
+
   get textureReference(): string | undefined {
     return (
       this.xml.child("TextureReference")?.textOf("Id") ??
@@ -134,6 +142,131 @@ export class Demo3DVisual extends Demo3DTypedObject {
     this.properties = xml.child("P");
     this.materials = findVisualMaterials(xml)
       .map((node) => new Demo3DMaterial(node.xsiType ?? "e3d:MeshMaterial", node));
+  }
+}
+
+export class Demo3DVector2 extends Demo3DTypedObject {
+  readonly x: number;
+  readonly y: number;
+
+  constructor(typeName: string, xml: Demo3DXmlElement) {
+    super(typeName, xml);
+    const values = parsePipeNumbers(xml.text);
+    this.x = values[0] ?? 0;
+    this.y = values[1] ?? 0;
+  }
+}
+
+export class Demo3DExtrusionPolygon extends Demo3DTypedObject {
+  private pointsCache?: readonly Demo3DVector2[];
+  private materialsCache?: readonly Demo3DMaterial[];
+  private smoothCache?: readonly boolean[];
+
+  get points(): readonly Demo3DVector2[] {
+    return this.pointsCache ??= (this.xml.child("Points")?.children ?? [])
+      .filter((point) => point.xsiType === "e3d:Vector2")
+      .map((point) => new Demo3DVector2(point.xsiType ?? "e3d:Vector2", point));
+  }
+
+  get materials(): readonly Demo3DMaterial[] {
+    return this.materialsCache ??= (this.xml.child("M")?.children ?? [])
+      .filter((material) => material.xsiType === "e3d:MeshMaterial")
+      .map((material) => new Demo3DMaterial(material.xsiType ?? "e3d:MeshMaterial", material));
+  }
+
+  get smooth(): readonly boolean[] {
+    return this.smoothCache ??= (this.xml.child("Smooth")?.children ?? [])
+      .map((value) => booleanValue(value.value, false));
+  }
+
+  get ignoreCutouts(): boolean {
+    return booleanValue(this.xml.valueOf("IgnoreCutouts"), false);
+  }
+}
+
+export class Demo3DExtrusionProfile {
+  private anchorCache?: Demo3DVector2;
+  private polygonsCache?: readonly Demo3DExtrusionPolygon[];
+
+  constructor(public readonly xml: Demo3DXmlElement) {}
+
+  get name(): string | undefined {
+    return this.xml.textOf("Name");
+  }
+
+  get anchor(): Demo3DVector2 {
+    const anchor = this.xml.child("Anchor");
+    return this.anchorCache ??= new Demo3DVector2("e3d:Vector2", anchor ?? emptyXmlElement("Anchor"));
+  }
+
+  get polygons(): readonly Demo3DExtrusionPolygon[] {
+    return this.polygonsCache ??= (this.xml.child("Polygons")?.children ?? [])
+      .filter((polygon) => polygon.xsiType === "e3d:ExtrusionPolygon")
+      .map((polygon) => new Demo3DExtrusionPolygon(polygon.xsiType ?? "e3d:ExtrusionPolygon", polygon));
+  }
+}
+
+export class Demo3DSupportStandProperties extends Demo3DTypedObject {
+  get legProfile(): Demo3DExtrusionProfile | undefined {
+    return extrusionProfile(this.xml.child("LegProfile"));
+  }
+
+  get footProfile(): Demo3DExtrusionProfile | undefined {
+    return extrusionProfile(this.xml.child("FootProfile"));
+  }
+
+  get floorPlateProfile(): Demo3DExtrusionProfile | undefined {
+    return extrusionProfile(this.xml.child("FloorPlateProfile"));
+  }
+
+  get crossBraceProfile(): Demo3DExtrusionProfile | undefined {
+    return extrusionProfile(this.xml.child("CrossBraceProfile"));
+  }
+
+  get conveyorOffset(): readonly (number | undefined)[] {
+    return parsePipeNumbers(this.xml.textOf("ConveyorOffset") ?? "");
+  }
+
+  get crossBraceHeights(): readonly number[] {
+    return numericChildren(this.xml.child("AddCrossBraceAtHeight"));
+  }
+
+  get footHeight(): number {
+    return numberValue(this.xml.valueOf("FootHeight")) ?? 0;
+  }
+
+  get floorPlateHeight(): number {
+    return numberValue(this.xml.valueOf("FloorPlateHeight")) ?? 0;
+  }
+
+  get legMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("LegMaterial"));
+  }
+
+  get footMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("FootMaterial"));
+  }
+
+  get floorPlateMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("FloorPlateMaterial"));
+  }
+
+  get crossBraceMaterial(): number | undefined {
+    return numberValue(this.xml.valueOf("CrossBraceMaterial"));
+  }
+}
+
+export class Demo3DSupportStand extends Demo3DVisual {
+  private supportPropertiesCache?: Demo3DSupportStandProperties;
+
+  get supportProperties(): Demo3DSupportStandProperties | undefined {
+    if (this.properties) {
+      return this.supportPropertiesCache ??= new Demo3DSupportStandProperties(
+        this.properties.xsiType ?? "e3d:SupportStandProperties",
+        this.properties
+      );
+    }
+    return undefined;
   }
 }
 
@@ -289,7 +422,10 @@ function findTopLevelVisualContainers(root: Demo3DXmlElement): readonly Demo3DXm
 }
 
 function buildVisual(node: Demo3DXmlElement): Demo3DVisual {
-  const visual = new Demo3DVisual(node.xsiType ?? "e3d:Visual", node);
+  const typed = createTypedObject(node);
+  const visual = typed instanceof Demo3DVisual
+    ? typed
+    : new Demo3DVisual(node.xsiType ?? "e3d:Visual", node);
   const childContainer = node.child("C");
   if (childContainer) {
     for (const child of childContainer.children) {
@@ -378,7 +514,66 @@ function booleanValue(value: Demo3DScalarValue | undefined, fallback: boolean): 
   return fallback;
 }
 
+function parsePipeNumbers(value: string): Array<number | undefined> {
+  return value.split("|").map((part) => {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  });
+}
+
+function numericChildren(container: Demo3DXmlElement | undefined): number[] {
+  const values: number[] = [];
+  for (const child of container?.children ?? []) {
+    const value = numberValue(child.value);
+    if (value !== undefined) {
+      values.push(value);
+    }
+  }
+  if (values.length === 0) {
+    const value = numberValue(container?.value);
+    if (value !== undefined) {
+      values.push(value);
+    }
+  }
+  return values;
+}
+
+function extrusionProfile(xml: Demo3DXmlElement | undefined): Demo3DExtrusionProfile | undefined {
+  return xml ? new Demo3DExtrusionProfile(xml) : undefined;
+}
+
+function emptyXmlElement(localName: string): Demo3DXmlElement {
+  return new Demo3DXmlElement(localName, localName, null, null, `/${localName}`, [], [], "", null, "");
+}
+
 registerDemo3DType("e3d:Visual", Demo3DVisual);
 registerDemo3DType("e3d:Mesh", Demo3DMesh);
 registerDemo3DType("e3d:MeshMaterial", Demo3DMaterial);
 registerDemo3DType("e3d:Layer", Demo3DLayer);
+registerDemo3DType("e3d:Vector2", Demo3DVector2);
+registerDemo3DType("e3d:ExtrusionPolygon", Demo3DExtrusionPolygon);
+registerDemo3DType("e3d:SupportStand", Demo3DSupportStand);
+registerDemo3DType("e3d:SupportStandProperties", Demo3DSupportStandProperties);
+
+for (const visualType of [
+  "e3d:BoxTubeVisual",
+  "e3d:BoxVisual",
+  "e3d:CurveRollerConveyor",
+  "e3d:CylinderVisual",
+  "e3d:ImportedImageVisual",
+  "e3d:ImportedMeshVisual",
+  "e3d:InjectorRollerConveyor",
+  "e3d:LightVisual",
+  "e3d:PhotoEye",
+  "e3d:PrimitivesVisual",
+  "e3d:StraightBeltConveyor",
+  "e3d:StraightRollerConveyor",
+  "e3d:TextVisual",
+  "e3d:WedgeVisual"
+]) {
+  registerDemo3DType(visualType, Demo3DVisual);
+}

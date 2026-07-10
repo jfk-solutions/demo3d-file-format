@@ -1,10 +1,13 @@
 import type * as Three from "three";
 import {
+  Demo3DExtrusionPolygon,
+  Demo3DExtrusionProfile,
   Demo3DMaterial,
   Demo3DMesh,
   Demo3DPackage,
   Demo3DProject,
   Demo3DResource,
+  Demo3DSupportStand,
   Demo3DVisual
 } from "../model.js";
 import { Demo3DBinaryBlock, Demo3DXmlElement } from "../xml.js";
@@ -36,6 +39,7 @@ export interface Demo3DThreeRendererOptions {
   readonly showPlaceholders?: boolean;
   readonly renderText?: boolean;
   readonly renderProceduralBelts?: boolean;
+  readonly renderProceduralSupportStands?: boolean;
   readonly includeUnsupported?: boolean;
   readonly includeSerializedRenderables?: boolean;
   readonly maxSerializedRenderables?: number;
@@ -53,6 +57,7 @@ export interface Demo3DThreeStats {
   lines: number;
   directVisuals: number;
   proceduralBelts: number;
+  proceduralSupportStands: number;
   imageVisuals: number;
   lights: number;
   missingGeometryPlaceholders: number;
@@ -67,6 +72,7 @@ interface Demo3DTextureImage {
   readonly mimeType: string;
   readonly width?: number;
   readonly height?: number;
+  readonly containsAlpha: boolean;
 }
 
 export interface Demo3DThreeScene {
@@ -214,12 +220,14 @@ export function createDemo3DThreeMaterial(
 ): Three.Material {
   const diffuse = material?.diffuse;
   const color = diffuse === undefined ? 0x9aa0a6 : demo3dColorToHex(diffuse);
-  const opacity = diffuse === undefined ? 1 : demo3dColorToOpacity(diffuse);
+  const opacity = demo3dMaterialOpacity(material);
+  const reflectivity = clamp01(material?.reflectivity ?? 0);
   return new three.MeshStandardMaterial({
     color,
     opacity,
     transparent: opacity < 1,
-    roughness: 0.72,
+    depthWrite: opacity >= 1,
+    roughness: 0.9 - reflectivity * 0.75,
     metalness: 0.05
   });
 }
@@ -269,6 +277,7 @@ function createState(
       lines: 0,
       directVisuals: 0,
       proceduralBelts: 0,
+      proceduralSupportStands: 0,
       imageVisuals: 0,
       lights: 0,
       missingGeometryPlaceholders: 0,
@@ -278,7 +287,12 @@ function createState(
   };
 }
 
-function createVisualObject(visual: Demo3DVisual, state: RendererState, inheritedLayer?: string): Three.Object3D {
+function createVisualObject(
+  visual: Demo3DVisual,
+  state: RendererState,
+  inheritedLayer?: string,
+  parentVisual?: Demo3DVisual
+): Three.Object3D {
   const refs = findMeshReferenceIds(visual.xml);
   const meshes: Three.Object3D[] = [];
   const textObjects: Three.Object3D[] = [];
@@ -295,7 +309,7 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState, inherite
     drawingBlockObjects.push(drawingBlockObject);
     meshes.push(drawingBlockObject);
   }
-  const directVisualObject = createDirectVisualObject(visual, state);
+  const directVisualObject = createDirectVisualObject(visual, state, parentVisual);
   if (directVisualObject) {
     directVisualObjects.push(directVisualObject);
     meshes.push(directVisualObject);
@@ -350,7 +364,7 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState, inherite
   };
 
   for (const child of visual.children) {
-    object.add(createVisualObject(child, state, layer));
+    object.add(createVisualObject(child, state, layer, visual));
   }
 
   return object;
@@ -468,7 +482,11 @@ function createDrawingBlockVisualObject(visual: Demo3DVisual, state: RendererSta
   return object;
 }
 
-function createDirectVisualObject(visual: Demo3DVisual, state: RendererState): Three.Object3D | undefined {
+function createDirectVisualObject(
+  visual: Demo3DVisual,
+  state: RendererState,
+  parentVisual?: Demo3DVisual
+): Three.Object3D | undefined {
   if (!isRenderableVisualVisible(visual)) {
     return undefined;
   }
@@ -484,6 +502,12 @@ function createDirectVisualObject(visual: Demo3DVisual, state: RendererState): T
   if (visual.typeName === "e3d:StraightBeltConveyor") {
     return state.options.renderProceduralBelts === true
       ? createStraightBeltConveyorObject(visual, state)
+      : undefined;
+  }
+
+  if (visual.typeName === "e3d:SupportStand") {
+    return state.options.renderProceduralSupportStands === true
+      ? createSupportStandObject(visual, parentVisual, state)
       : undefined;
   }
 
@@ -708,6 +732,206 @@ function createRoundedBeltGeometry(belt: ProceduralBelt, state: RendererState): 
   for (const group of geometry.groups) {
     group.materialIndex = group.materialIndex === 0 ? 1 : 0;
   }
+  return geometry;
+}
+
+function createSupportStandObject(
+  visual: Demo3DVisual,
+  parentVisual: Demo3DVisual | undefined,
+  state: RendererState
+): Three.Group | undefined {
+  const stand = visual instanceof Demo3DSupportStand
+    ? visual
+    : new Demo3DSupportStand(visual.typeName, visual.xml);
+  const properties = stand.supportProperties;
+  const legProfile = properties?.legProfile;
+  const footProfile = properties?.footProfile;
+  const floorPlateProfile = properties?.floorPlateProfile;
+  const crossBraceProfile = properties?.crossBraceProfile;
+  if (!properties || !legProfile || !crossBraceProfile) {
+    warn(state, {
+      code: "DEMO3D_THREE_UNSUPPORTED_SUPPORT_STAND_PROFILE",
+      message: "Support stand is missing its leg or cross-brace extrusion profile.",
+      sourceId: visual.id,
+      sourceType: visual.typeName,
+      xmlPath: visual.xml.path
+    });
+    return undefined;
+  }
+
+  const braces = [...properties.crossBraceHeights]
+    .filter((height) => height > 0)
+    .sort((left, right) => left - right);
+  const explicitHeight =
+    numberChildOptional(visual.properties, "SupportHeight") ??
+    numberChildOptional(visual.properties, "Height") ??
+    numberChildOptional(visual.properties, "FloorHeight");
+  const finalSpacing = braces.length > 1
+    ? braces[braces.length - 1] - braces[braces.length - 2]
+    : braces[0];
+  const supportHeight = explicitHeight ?? (
+    braces.length > 0
+      ? braces[braces.length - 1] + Math.max(finalSpacing ?? 0, 0.05)
+      : 1
+  );
+  const parentWidth =
+    numberChildOptional(parentVisual?.properties, "RollerWidth") ??
+    numberChildOptional(parentVisual?.properties, "BeltWidth") ??
+    numberChildOptional(parentVisual?.properties, "Width") ??
+    0.5;
+  const conveyorOffset = properties.conveyorOffset;
+  const sideExtension = Math.abs(conveyorOffset[2] ?? 0);
+  const span = Math.max(parentWidth + sideExtension * 2, 0.1);
+  const top = conveyorOffset[1] ?? 0;
+  const x = conveyorOffset[0] ?? 0;
+  const bottom = top - supportHeight;
+  const floorPlateHeight = clamp(properties.floorPlateHeight, 0, supportHeight);
+  const footHeight = clamp(properties.footHeight, 0, supportHeight - floorPlateHeight);
+  const legHeight = Math.max(supportHeight - floorPlateHeight - footHeight, 0.001);
+  const group = new state.three.Group();
+  group.name = `${visual.displayName ?? visual.id ?? "Support stand"} geometry`;
+
+  for (const z of [-span / 2, span / 2]) {
+    addSupportProfileMeshes(
+      group,
+      legProfile,
+      "vertical",
+      legHeight,
+      [x, top, z],
+      properties.legMaterial,
+      "leg",
+      state
+    );
+    if (footProfile && footHeight > 0) {
+      addSupportProfileMeshes(
+        group,
+        footProfile,
+        "vertical",
+        footHeight,
+        [x, bottom + floorPlateHeight + footHeight, z],
+        properties.footMaterial,
+        "foot",
+        state
+      );
+    }
+    if (floorPlateProfile && floorPlateHeight > 0) {
+      addSupportProfileMeshes(
+        group,
+        floorPlateProfile,
+        "vertical",
+        floorPlateHeight,
+        [x, bottom + floorPlateHeight, z],
+        properties.floorPlateMaterial,
+        "floor plate",
+        state
+      );
+    }
+  }
+
+  const braceHeights = [...braces, supportHeight];
+  for (const height of braceHeights) {
+    addSupportProfileMeshes(
+      group,
+      crossBraceProfile,
+      "horizontal",
+      span,
+      [x, bottom + height, 0],
+      properties.crossBraceMaterial,
+      height === supportHeight ? "top brace" : "cross brace",
+      state
+    );
+  }
+
+  if (group.children.length === 0) {
+    return undefined;
+  }
+  group.userData.demo3d = {
+    kind: "procedural-support-stand",
+    id: visual.id,
+    name: visual.displayName,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path,
+    supportHeight,
+    span,
+    braceHeights: braces
+  };
+  state.stats.groups += 1;
+  state.stats.directVisuals += 1;
+  state.stats.proceduralSupportStands += 1;
+  return group;
+}
+
+type SupportProfileAxis = "vertical" | "horizontal";
+
+function addSupportProfileMeshes(
+  group: Three.Group,
+  profile: Demo3DExtrusionProfile,
+  axis: SupportProfileAxis,
+  length: number,
+  position: readonly [number, number, number],
+  fallbackColor: number | undefined,
+  component: string,
+  state: RendererState
+): void {
+  profile.polygons.forEach((polygon, index) => {
+    if (polygon.points.length < 3) {
+      return;
+    }
+    const geometry = getSupportProfileGeometry(profile, polygon, axis, length, state);
+    const material = polygon.materials[0]
+      ? getMaterial(polygon.materials[0], state)
+      : getColorMaterial(fallbackColor, state);
+    const mesh = new state.three.Mesh(geometry, material);
+    mesh.name = `${profile.name || component} ${index + 1}`;
+    mesh.position.set(position[0], position[1], position[2]);
+    mesh.userData.demo3d = { kind: "support-stand-component", component };
+    group.add(mesh);
+    state.stats.meshes += 1;
+  });
+}
+
+function getSupportProfileGeometry(
+  profile: Demo3DExtrusionProfile,
+  polygon: Demo3DExtrusionPolygon,
+  axis: SupportProfileAxis,
+  length: number,
+  state: RendererState
+): Three.BufferGeometry {
+  const pointsKey = polygon.points.map((point) => `${point.x},${point.y}`).join(";");
+  const key = `support:${axis}:${length}:${profile.anchor.x},${profile.anchor.y}:${pointsKey}`;
+  const cached = state.primitiveGeometryCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const shape = new state.three.Shape();
+  polygon.points.forEach((point, index) => {
+    const x = point.x - profile.anchor.x;
+    const y = axis === "vertical"
+      ? -(point.y - profile.anchor.y)
+      : point.y - profile.anchor.y;
+    if (index === 0) {
+      shape.moveTo(x, y);
+    } else {
+      shape.lineTo(x, y);
+    }
+  });
+  shape.closePath();
+  const geometry = new state.three.ExtrudeGeometry(shape, {
+    bevelEnabled: false,
+    curveSegments: 1,
+    depth: length,
+    steps: 1
+  });
+  if (axis === "vertical") {
+    geometry.rotateX(Math.PI / 2);
+  } else {
+    geometry.translate(0, 0, -length / 2);
+  }
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  state.primitiveGeometryCache.set(key, geometry);
+  state.stats.geometries += 1;
   return geometry;
 }
 
@@ -1067,7 +1291,13 @@ function getMaterial(material: Demo3DMaterial | undefined, state: RendererState)
   }
 
   const textureReference = material.textureReference;
-  const key = `${String(material.diffuse ?? "default")}:${textureReference ?? ""}`;
+  const key = [
+    "material",
+    String(material.diffuse ?? "default"),
+    String(material.transparency ?? 0),
+    String(material.reflectivity ?? 0),
+    textureReference ?? ""
+  ].join(":");
   const cached = state.materialCache.get(key);
   if (cached) {
     return cached;
@@ -1076,7 +1306,12 @@ function getMaterial(material: Demo3DMaterial | undefined, state: RendererState)
   const created = createDemo3DThreeMaterial(material, state.three);
   const texture = textureReference ? getTexture(textureReference, state) : undefined;
   if (texture && "map" in created) {
-    (created as Three.MeshStandardMaterial).map = texture;
+    const standard = created as Three.MeshStandardMaterial;
+    standard.map = texture;
+    if (textureReference && state.textureImageById.get(textureReference)?.containsAlpha) {
+      standard.transparent = true;
+      standard.depthWrite = false;
+    }
     created.needsUpdate = true;
   }
   state.materialCache.set(key, created);
@@ -1084,11 +1319,35 @@ function getMaterial(material: Demo3DMaterial | undefined, state: RendererState)
   return created;
 }
 
+function getColorMaterial(color: number | undefined, state: RendererState): Three.Material {
+  if (color === undefined) {
+    return state.defaultMaterial;
+  }
+  const opacity = demo3dColorToOpacity(color);
+  const key = `color:${color}:${opacity}`;
+  const cached = state.materialCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const created = new state.three.MeshStandardMaterial({
+    color: demo3dColorToHex(color),
+    opacity,
+    transparent: opacity < 1,
+    depthWrite: opacity >= 1,
+    roughness: 0.9,
+    metalness: 0.05
+  });
+  state.materialCache.set(key, created);
+  state.stats.materials += 1;
+  return created;
+}
+
 function getImageMaterial(material: Demo3DMaterial | undefined, state: RendererState): Three.Material {
   const diffuse = material?.diffuse;
+  const opacity = demo3dMaterialOpacity(material);
   const textureReference = material?.textureReference;
   const texture = textureReference ? getTexture(textureReference, state) : undefined;
-  const key = `image:${String(diffuse ?? "default")}:${textureReference ?? ""}`;
+  const key = `image:${String(diffuse ?? "default")}:${String(material?.transparency ?? 0)}:${textureReference ?? ""}`;
   const cached = state.materialCache.get(key);
   if (cached) {
     return cached;
@@ -1096,8 +1355,9 @@ function getImageMaterial(material: Demo3DMaterial | undefined, state: RendererS
 
   const parameters: Three.MeshBasicMaterialParameters = {
     color: diffuse === undefined ? 0xffffff : demo3dColorToHex(diffuse),
-    transparent: texture !== undefined || demo3dColorToOpacity(diffuse ?? 0xffffffff) < 1,
-    opacity: diffuse === undefined ? 1 : demo3dColorToOpacity(diffuse),
+    transparent: texture !== undefined || opacity < 1,
+    opacity,
+    depthWrite: texture === undefined && opacity >= 1,
     side: state.three.DoubleSide
   };
   if (texture) {
@@ -1204,13 +1464,19 @@ function createFallbackTextMesh(
 
 function getLineMaterial(material: Demo3DMaterial | undefined, state: RendererState): Three.Material {
   const color = material?.diffuse === undefined ? 0x202124 : demo3dColorToHex(material.diffuse);
-  const key = `line:${color}`;
+  const opacity = demo3dMaterialOpacity(material);
+  const key = `line:${color}:${opacity}`;
   const cached = state.materialCache.get(key);
   if (cached) {
     return cached;
   }
 
-  const created = new state.three.LineBasicMaterial({ color });
+  const created = new state.three.LineBasicMaterial({
+    color,
+    opacity,
+    transparent: opacity < 1,
+    depthWrite: opacity >= 1
+  });
   state.materialCache.set(key, created);
   state.stats.materials += 1;
   return created;
@@ -1307,7 +1573,8 @@ function indexTextureImages(project: Demo3DProject): Map<string, Demo3DTextureIm
       base64: bytes,
       mimeType: imageMimeType(bytes),
       width: numberChildOptional(value, "Width"),
-      height: numberChildOptional(value, "Height")
+      height: numberChildOptional(value, "Height"),
+      containsAlpha: isTrue(value?.textOf("ContainsAlpha"))
     });
   }
 
@@ -1563,7 +1830,23 @@ function demo3dColorToHex(color: number): number {
 
 function demo3dColorToOpacity(color: number): number {
   const alpha = (color >>> 24) & 0xff;
-  return alpha === 0 ? 1 : alpha / 255;
+  return alpha / 255;
+}
+
+function demo3dMaterialOpacity(material: Demo3DMaterial | undefined): number {
+  const colorOpacity = material?.diffuse === undefined
+    ? 1
+    : demo3dColorToOpacity(material.diffuse);
+  const transparency = clamp01(material?.transparency ?? 0);
+  return colorOpacity * (1 - transparency);
+}
+
+function clamp01(value: number): number {
+  return clamp(value, 0, 1);
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function applyDemo3DTransform(object: Three.Object3D, transformText: string | undefined): void {

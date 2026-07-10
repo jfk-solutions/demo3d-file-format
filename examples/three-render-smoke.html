@@ -109,7 +109,8 @@
           status.value = "Creating Three objects...";
           const group = await createDemo3DThreeGroup(parsed, {
             three: THREE,
-            renderProceduralBelts: true
+            renderProceduralBelts: true,
+            renderProceduralSupportStands: true
           });
 
           status.value = "Rendering...";
@@ -154,7 +155,8 @@
           status.value =
             `Rendered with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
             `(${stats.serializedRenderables} placed renderables, ` +
-            `${stats.proceduralBelts} belts, ${stats.materials} materials, ${stats.textures} textures).`;
+            `${stats.proceduralBelts} belts, ${stats.proceduralSupportStands} support stands, ` +
+            `${stats.materials} materials, ${stats.textures} textures).`;
         } catch (error) {
           window.__demo3dRenderResult = {
             status: "error",

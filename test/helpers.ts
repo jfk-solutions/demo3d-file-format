@@ -155,3 +155,50 @@ export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
     </e>
   </C>
 </e3d:Demo3DProject>`;
+
+export const supportStandXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:StraightRollerConveyor">
+      <Id>conveyor-1</Id><N>Conveyor</N>
+      <P xsi:type="e3d:StraightRollerConveyorProperties"><RollerWidth>0.4</RollerWidth></P>
+      <C>
+        <e xsi:type="e3d:SupportStand">
+          <Id>support-definition</Id><N>SU-W420-UH1400</N>
+          <P xsi:type="e3d:SupportStandProperties"><Visible>0</Visible></P>
+        </e>
+        <e xsi:type="e3d:SupportStand">
+          <Id>support-visible</Id><N>SupportStandRM8841 42</N>
+          <P xsi:type="e3d:SupportStandProperties">
+            <AddCrossBraceAtHeight><e xsi:type="xsd:double">0.4</e><e xsi:type="xsd:double">0.8</e></AddCrossBraceAtHeight>
+            <ConveyorOffset>|-0.1|-0.05</ConveyorOffset>
+            <CrossBraceMaterial>-15724266</CrossBraceMaterial>
+            <CrossBraceProfile>${supportProfileXml("CrossBrace", 0.02, 0.06)}</CrossBraceProfile>
+            <FloorPlateHeight>0.01</FloorPlateHeight>
+            <FloorPlateMaterial>-15724266</FloorPlateMaterial>
+            <FloorPlateProfile>${supportProfileXml("FloorPlate", 0.08, 0.16)}</FloorPlateProfile>
+            <FootHeight>0.2</FootHeight>
+            <FootMaterial>-15724266</FootMaterial>
+            <FootProfile>${supportProfileXml("Foot", 0.05, 0.09)}</FootProfile>
+            <LegMaterial>-15724266</LegMaterial>
+            <LegProfile>${supportProfileXml("Leg", 0.04, 0.08)}</LegProfile>
+          </P>
+        </e>
+      </C>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+function supportProfileXml(name: string, width: number, depth: number): string {
+  const halfWidth = width / 2;
+  const halfDepth = depth / 2;
+  return `<Name>${name}</Name><Polygons><e xsi:type="e3d:ExtrusionPolygon">
+    <Points>
+      <e xsi:type="e3d:Vector2">${-halfWidth}|${-halfDepth}</e>
+      <e xsi:type="e3d:Vector2">${halfWidth}|${-halfDepth}</e>
+      <e xsi:type="e3d:Vector2">${halfWidth}|${halfDepth}</e>
+      <e xsi:type="e3d:Vector2">${-halfWidth}|${halfDepth}</e>
+    </Points>
+    <M><e xsi:type="e3d:MeshMaterial"><Diffuse>-15724266</Diffuse></e></M>
+    <IgnoreCutouts>0</IgnoreCutouts>
+  </e></Polygons><Anchor>0|0</Anchor>`;
+}

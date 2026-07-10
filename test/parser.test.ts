@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { parseDemo3D, parseDemo3DXmlFast } from "../src/index.js";
+import {
+  Demo3DExtrusionPolygon,
+  Demo3DSupportStand,
+  Demo3DVector2,
+  parseDemo3D,
+  parseDemo3DXmlFast
+} from "../src/index.js";
 import { xmlDocumentToElement } from "../src/xml.js";
-import { createZip, demo3dXmlFixture, parseXml } from "./helpers.js";
+import { createZip, demo3dXmlFixture, parseXml, supportStandXmlFixture } from "./helpers.js";
 
 describe("parseDemo3D", () => {
   it("parses a Demo3D package into a typed object model", async () => {
@@ -47,6 +53,25 @@ describe("parseDemo3D", () => {
 
     expect(unknown?.xml.localName).toBe("VendorThing");
     expect(unknown?.xml.child("Value")?.value).toBe(42);
+  });
+
+  it("extracts typed support stand extrusion profiles", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: supportStandXmlFixture }]),
+      { parseXml }
+    );
+    const support = parsed.model.visuals[0]?.children[1];
+
+    expect(support).toBeInstanceOf(Demo3DSupportStand);
+    const properties = (support as Demo3DSupportStand).supportProperties;
+    expect(properties?.crossBraceHeights).toEqual([0.4, 0.8]);
+    expect(properties?.conveyorOffset).toEqual([undefined, -0.1, -0.05]);
+    expect(properties?.legProfile?.polygons[0]).toBeInstanceOf(Demo3DExtrusionPolygon);
+    expect(properties?.legProfile?.polygons[0]?.points[0]).toBeInstanceOf(Demo3DVector2);
+    expect(properties?.legProfile?.polygons[0]?.points[0]).toMatchObject({ x: -0.02, y: -0.04 });
+    expect(parsed.model.unknownTypes.has("e3d:SupportStand")).toBe(false);
+    expect(parsed.model.unknownTypes.has("e3d:ExtrusionPolygon")).toBe(false);
+    expect(parsed.model.unknownTypes.has("e3d:Vector2")).toBe(false);
   });
 
   it("builds the same object tree through fast and DOM XML parsing", () => {

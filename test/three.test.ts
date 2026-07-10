@@ -6,7 +6,7 @@ import {
   decodeDemo3DThreeGeometry,
   createDemo3DThreeMaterial
 } from "../src/three/index.js";
-import { createZip, demo3dXmlFixture, parseXml } from "./helpers.js";
+import { createZip, demo3dXmlFixture, parseXml, supportStandXmlFixture } from "./helpers.js";
 
 describe("Three renderer adapter", () => {
   it("converts parsed Demo3D meshes into Three geometry", async () => {
@@ -27,6 +27,21 @@ describe("Three renderer adapter", () => {
     expect(source?.diffuse).toBe(-16744448);
     expect(material.type).toBe("MeshStandardMaterial");
     expect(material.color.getHex()).toBe(0x008000);
+  });
+
+  it("combines ARGB alpha, transparency, and reflectivity", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: alphaMaterialXmlFixture }]), {
+      parseXml
+    });
+    const partial = createDemo3DThreeMaterial(parsed.model.visuals[0]?.materials[0], three) as three.MeshStandardMaterial;
+    const invisible = createDemo3DThreeMaterial(parsed.model.visuals[1]?.materials[0], three) as three.MeshStandardMaterial;
+
+    expect(partial.opacity).toBeCloseTo((128 / 255) * 0.75);
+    expect(partial.transparent).toBe(true);
+    expect(partial.depthWrite).toBe(false);
+    expect(partial.roughness).toBeCloseTo(0.525);
+    expect(invisible.opacity).toBe(0);
+    expect(invisible.transparent).toBe(true);
   });
 
   it("creates a Three object hierarchy without importing Three from the parser root", async () => {
@@ -149,6 +164,34 @@ describe("Three renderer adapter", () => {
     expect(((belt.material as three.Material[])[1] as three.MeshStandardMaterial).color.getHex()).toBe(0xc0c0c0);
   });
 
+  it("renders profile-based support stands only when explicitly enabled", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: supportStandXmlFixture }]), {
+      parseXml
+    });
+    const disabled = await createDemo3DThreeGroup(parsed, { three });
+    const enabled = await createDemo3DThreeGroup(parsed, { three, renderProceduralSupportStands: true });
+    let support: three.Object3D | undefined;
+    enabled.traverse((object) => {
+      if (object.userData.demo3d?.kind === "procedural-support-stand") {
+        support = object;
+      }
+    });
+
+    expect(disabled.userData.demo3d.stats.proceduralSupportStands).toBe(0);
+    expect(enabled.userData.demo3d.stats.proceduralSupportStands).toBe(1);
+    expect(support).toBeDefined();
+    expect(support?.children).toHaveLength(9);
+    const bounds = new three.Box3().setFromObject(support!);
+    const size = bounds.getSize(new three.Vector3());
+    expect(size.y).toBeGreaterThan(1.1);
+    expect(size.z).toBeGreaterThan(0.5);
+    expect(support?.userData.demo3d).toMatchObject({
+      span: 0.5,
+      braceHeights: [0.4, 0.8]
+    });
+    expect(support?.userData.demo3d.supportHeight).toBeCloseTo(1.2);
+  });
+
   it("renders Demo3D light visuals as Three lights", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: lightVisualXmlFixture }]), {
       parseXml
@@ -224,6 +267,17 @@ const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </Renderables>
     </E>
   </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+const alphaMaterialXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:BoxVisual"><Id>partial</Id><N>Partial</N><P><Material><MeshMaterial xsi:type="e3d:MeshMaterial">
+      <Diffuse>-2130706433</Diffuse><Transparency>0.25</Transparency><Reflectivity>0.5</Reflectivity>
+    </MeshMaterial></Material></P></e>
+    <e xsi:type="e3d:BoxVisual"><Id>invisible</Id><N>Invisible</N><P><Material><MeshMaterial xsi:type="e3d:MeshMaterial">
+      <Diffuse>16777215</Diffuse>
+    </MeshMaterial></Material></P></e>
+  </C>
 </e3d:Demo3DProject>`;
 
 const bufferDrawingBlockXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

@@ -67,6 +67,7 @@ test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ p
   expect(result.stats.lines).toBeGreaterThan(0);
   expect(result.stats.directVisuals).toBeGreaterThan(0);
   expect(result.stats.proceduralBelts).toBe(33);
+  expect(result.stats.proceduralSupportStands).toBeGreaterThan(0);
   expect(result.stats.imageVisuals).toBeGreaterThan(0);
   expect(result.stats.lights).toBeGreaterThan(0);
   expect(result.stats.missingGeometryPlaceholders).toBeGreaterThan(0);
@@ -139,6 +140,7 @@ declare global {
         lines: number;
         directVisuals: number;
         proceduralBelts: number;
+        proceduralSupportStands: number;
         imageVisuals: number;
         lights: number;
         missingGeometryPlaceholders: number;
