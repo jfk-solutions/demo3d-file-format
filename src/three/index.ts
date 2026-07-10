@@ -9,6 +9,17 @@ import {
 } from "../model.js";
 import { Demo3DBinaryBlock, Demo3DXmlElement } from "../xml.js";
 
+export {
+  createDemo3DThreeRenderer,
+  type Demo3DThreeCanvasRendererOptions,
+  type Demo3DThreeModule,
+  type Demo3DThreeRendererInstance,
+  type Demo3DThreeRendererFallback,
+  type Demo3DThreeRendererResult,
+  type Demo3DThreeRenderBackend,
+  type Demo3DThreeWebGPUModule
+} from "./renderer.js";
+
 export type ThreeModule = typeof Three;
 
 export interface Demo3DThreeWarning {

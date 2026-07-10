@@ -8,6 +8,7 @@
       {
         "imports": {
           "three": "../node_modules/three/build/three.module.js",
+          "three/webgpu": "../node_modules/three/build/three.webgpu.js",
           "three/addons/": "../node_modules/three/examples/jsm/"
         }
       }
@@ -63,10 +64,12 @@
     <canvas id="viewport"></canvas>
 
     <script type="module">
-      import * as THREE from "three";
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
       import { parseDemo3D } from "../dist/index.js";
-      import { createDemo3DThreeGroup } from "../dist/three/index.js";
+      import {
+        createDemo3DThreeGroup,
+        createDemo3DThreeRenderer
+      } from "../dist/three/index.js";
 
       const input = document.querySelector("#demo3d-file");
       const fitMain = document.querySelector("#fit-main");
@@ -76,6 +79,7 @@
 
       window.__demo3dRenderResult = { status: "idle" };
       let currentRender = null;
+      const rendererMode = new URL(window.location.href).searchParams.get("renderer");
 
       fitMain.addEventListener("click", () => fitCurrentScene("main"));
       fitAll.addEventListener("click", () => fitCurrentScene("all"));
@@ -91,6 +95,17 @@
 
         try {
           const parsed = await parseDemo3D(await file.arrayBuffer());
+          status.value = "Selecting renderer...";
+          disposeCurrentRender();
+          const selected = await createDemo3DThreeRenderer({
+            canvas,
+            preferWebGPU: rendererMode !== "webgl",
+            antialias: true,
+            preserveDrawingBuffer: true,
+            powerPreference: "high-performance"
+          });
+          const THREE = selected.three;
+
           status.value = "Creating Three objects...";
           const group = await createDemo3DThreeGroup(parsed, {
             three: THREE,
@@ -106,7 +121,7 @@
           directional.position.set(50, 80, 40);
           scene.add(directional);
 
-          const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+          const renderer = selected.renderer;
           renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
           renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
           renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -114,14 +129,14 @@
           renderer.toneMappingExposure = 1.1;
 
           const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 100000);
-          const center = frameCamera(camera, group, "main");
+          const center = frameCamera(THREE, camera, group, "main");
 
           const controls = new OrbitControls(camera, canvas);
           controls.target.copy(center);
           controls.update();
           controls.addEventListener("change", () => renderer.render(scene, camera));
 
-          currentRender = { camera, controls, group, renderer, scene };
+          currentRender = { backend: selected.backend, camera, controls, group, renderer, scene, three: THREE };
           fitMain.disabled = false;
           fitAll.disabled = false;
           window.addEventListener("resize", resizeCurrentRenderer);
@@ -131,11 +146,14 @@
           const stats = group.userData.demo3d.stats;
           window.__demo3dRenderResult = {
             status: "rendered",
+            backend: selected.backend,
+            fallback: selected.fallback?.code,
             stats,
             warnings: group.userData.demo3d.warnings.length
           };
           status.value =
-            `Rendered ${stats.meshes} meshes (${stats.serializedRenderables} placed renderables, ` +
+            `Rendered with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
+            `(${stats.serializedRenderables} placed renderables, ` +
             `${stats.proceduralBelts} belts, ${stats.materials} materials, ${stats.textures} textures).`;
         } catch (error) {
           window.__demo3dRenderResult = {
@@ -178,7 +196,7 @@
           return;
         }
 
-        const center = frameCamera(currentRender.camera, currentRender.group, mode);
+        const center = frameCamera(currentRender.three, currentRender.camera, currentRender.group, mode);
         currentRender.controls.target.copy(center);
         currentRender.controls.update();
         currentRender.renderer.render(currentRender.scene, currentRender.camera);
@@ -196,8 +214,17 @@
         renderer.render(scene, camera);
       }
 
-      function frameCamera(camera, object, mode) {
-        const box = mode === "all" ? new THREE.Box3().setFromObject(object) : computeTrimmedBounds(object);
+      function disposeCurrentRender() {
+        if (!currentRender) {
+          return;
+        }
+        currentRender.controls.dispose();
+        currentRender.renderer.dispose();
+        currentRender = null;
+      }
+
+      function frameCamera(THREE, camera, object, mode) {
+        const box = mode === "all" ? new THREE.Box3().setFromObject(object) : computeTrimmedBounds(THREE, object);
         if (box.isEmpty()) {
           camera.position.set(10, 10, 10);
           camera.lookAt(0, 0, 0);
@@ -215,7 +242,7 @@
         return center;
       }
 
-      function computeTrimmedBounds(object) {
+      function computeTrimmedBounds(THREE, object) {
         const meshBounds = [];
         object.updateWorldMatrix(true, true);
         object.traverse((child) => {

@@ -61,6 +61,42 @@ const group = await createDemo3DThreeGroup(parsed, {
 serialized dimensions, cap types, and surface/side materials. It defaults to
 `false`.
 
+### WebGPU With WebGL Fallback
+
+Tools can lazily select a canvas renderer before creating the Demo3D scene. The
+factory probes for a WebGPU adapter and imports `three/webgpu` only when one is
+available. Otherwise, or when WebGPU initialization fails, it falls back to
+WebGL:
+
+```ts
+import {
+  createDemo3DThreeGroup,
+  createDemo3DThreeRenderer
+} from "demo3d-file-format/three";
+
+const selected = await createDemo3DThreeRenderer({
+  canvas,
+  antialias: true,
+  powerPreference: "high-performance"
+});
+const group = await createDemo3DThreeGroup(parsed, {
+  three: selected.three
+});
+const scene = new selected.three.Scene();
+scene.add(group);
+const camera = new selected.three.PerspectiveCamera(45, width / height, 0.1, 100000);
+
+selected.renderer.render(scene, camera);
+console.log(selected.backend); // "webgpu" or "webgl"
+```
+
+Always pass `selected.three` into the scene adapter so WebGPU materials and
+lights come from the same Three.js module as the renderer. Set
+`preferWebGPU: false` to force the existing `WebGLRenderer` path.
+
+WebGPU can improve repeated rendering of complex scenes, but it does not speed
+up archive/XML parsing and may have higher first-frame shader compilation cost.
+
 ## Current Scope
 
 - Read-only parser.

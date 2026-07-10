@@ -56,6 +56,7 @@ test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ p
   });
 
   const result = await page.evaluate(() => window.__demo3dRenderResult);
+  expect(["webgpu", "webgl"]).toContain(result.backend);
   expect(result.stats.meshes).toBeGreaterThan(0);
   expect(result.stats.geometries).toBeGreaterThan(0);
   expect(result.stats.materials).toBeGreaterThan(10);
@@ -126,6 +127,8 @@ declare global {
   interface Window {
     __demo3dRenderResult?: {
       status: string;
+      backend?: "webgpu" | "webgl";
+      fallback?: string;
       stats: {
         meshes: number;
         geometries: number;
