@@ -130,6 +130,32 @@ describe("Three renderer adapter", () => {
     expect(light.type).toBe("DirectionalLight");
     expect(light.userData.demo3d.kind).toBe("light");
   });
+
+  it("draws diagnostic placeholders for missing mesh references by default", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: missingMeshXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    const visual = group.children[0]!;
+    const placeholder = visual.children[0]!;
+
+    expect(group.userData.demo3d.stats.missingGeometryPlaceholders).toBe(1);
+    expect(group.userData.demo3d.stats.unsupported).toBe(1);
+    expect(placeholder.userData.demo3d.kind).toBe("missing-geometry-placeholder");
+    expect(placeholder.userData.demo3d.meshReferenceId).toBe("missing-mesh");
+  });
+
+  it("can suppress missing mesh placeholders for strict geometry-only rendering", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: missingMeshXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three, showPlaceholders: false });
+
+    expect(group.userData.demo3d.stats.missingGeometryPlaceholders).toBe(0);
+    expect(group.userData.demo3d.stats.unsupported).toBe(1);
+  });
 });
 
 const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
@@ -232,6 +258,23 @@ const lightVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2
       <P xsi:type="e3d:LightProperties">
         <Diffuse>-1</Diffuse>
         <LightType>Directional</LightType>
+      </P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+const missingMeshXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:Visual">
+      <Id>missing-visual</Id>
+      <N>Missing Mesh Visual</N>
+      <P xsi:type="e3d:VisualProperties">
+        <Mesh><Id>missing-mesh</Id></Mesh>
+        <Material>
+          <MeshMaterial xsi:type="e3d:MeshMaterial">
+            <Diffuse>-16711681</Diffuse>
+          </MeshMaterial>
+        </Material>
       </P>
     </e>
   </C>

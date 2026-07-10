@@ -42,6 +42,7 @@ export interface Demo3DThreeStats {
   directVisuals: number;
   imageVisuals: number;
   lights: number;
+  missingGeometryPlaceholders: number;
   serializedRenderables: number;
   unsupported: number;
 }
@@ -255,6 +256,7 @@ function createState(
       directVisuals: 0,
       imageVisuals: 0,
       lights: 0,
+      missingGeometryPlaceholders: 0,
       serializedRenderables: 0,
       unsupported: 0
     }
@@ -267,6 +269,7 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
   const textObjects: Three.Object3D[] = [];
   const drawingBlockObjects: Three.Object3D[] = [];
   const directVisualObjects: Three.Object3D[] = [];
+  const placeholderObjects: Three.Object3D[] = [];
   const textObject = createTextVisualObject(visual, state);
   if (textObject) {
     textObjects.push(textObject);
@@ -286,6 +289,9 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
   for (const ref of refs) {
     const mesh = createMeshObject(ref, visual, visual.materials[0], state);
     if (mesh) {
+      if (mesh.userData.demo3d?.kind === "missing-geometry-placeholder") {
+        placeholderObjects.push(mesh);
+      }
       meshes.push(mesh);
     }
   }
@@ -300,7 +306,8 @@ function createVisualObject(visual: Demo3DVisual, state: RendererState): Three.O
     aspectRenderableObjects.length === 0 &&
     textObjects.length === 0 &&
     drawingBlockObjects.length === 0 &&
-    directVisualObjects.length === 0
+    directVisualObjects.length === 0 &&
+    placeholderObjects.length === 0
   ) {
     object = meshes[0];
   } else {
@@ -354,9 +361,11 @@ function createAspectRenderableObjects(visual: Demo3DVisual, state: RendererStat
 
         applyRenderableTransform(mesh, renderable);
         mesh.name = visual.displayName ? `${visual.displayName} ${mesh.name}` : mesh.name;
+        const existingDemo3D = mesh.userData.demo3d ?? {};
         mesh.userData.demo3d = {
-          ...mesh.userData.demo3d,
-          kind: "renderable",
+          ...existingDemo3D,
+          kind: existingDemo3D.kind === "missing-geometry-placeholder" ? existingDemo3D.kind : "renderable",
+          renderableKind: "renderable",
           visualId: visual.id,
           visualName: visual.displayName,
           aspectId: aspect.textOf("Id"),
@@ -674,12 +683,16 @@ function createMeshObject(
       sourceType,
       xmlPath
     });
-    return state.options.showPlaceholders ? createPlaceholderMesh(sourceId ?? meshId, state) : undefined;
+    return state.options.showPlaceholders === false
+      ? undefined
+      : createPlaceholderMesh(sourceId ?? meshId, meshId, material, state);
   }
 
   const geometry = getGeometry(mesh, state);
   if (!geometry) {
-    return state.options.showPlaceholders ? createPlaceholderMesh(sourceId ?? meshId, state) : undefined;
+    return state.options.showPlaceholders === false
+      ? undefined
+      : createPlaceholderMesh(sourceId ?? meshId, meshId, material, state);
   }
 
   const object = new state.three.Mesh(geometry, getMaterial(material, state));
@@ -1204,13 +1217,23 @@ function positionSerializedPreviewMesh(mesh: Three.Mesh, index: number): void {
   mesh.position.set(gridX - center.x * scale, -center.y * scale, gridZ - center.z * scale);
 }
 
-function createPlaceholderMesh(name: string, state: RendererState): Three.Mesh {
+function createPlaceholderMesh(
+  name: string,
+  meshReferenceId: string,
+  material: Demo3DMaterial | undefined,
+  state: RendererState
+): Three.Mesh {
   const geometry = new state.three.BoxGeometry(0.25, 0.25, 0.25);
-  const mesh = new state.three.Mesh(geometry, state.defaultMaterial);
-  mesh.name = `${name} placeholder`;
-  mesh.userData.demo3d = { kind: "placeholder", sourceId: name };
+  const mesh = new state.three.Mesh(geometry, getMaterial(material, state));
+  mesh.name = `${name} missing geometry`;
+  mesh.userData.demo3d = {
+    kind: "missing-geometry-placeholder",
+    sourceId: name,
+    meshReferenceId
+  };
   state.stats.meshes += 1;
   state.stats.geometries += 1;
+  state.stats.missingGeometryPlaceholders += 1;
   return mesh;
 }
 
