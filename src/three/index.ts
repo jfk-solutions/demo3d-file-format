@@ -2248,8 +2248,12 @@ function findVisualAspects(visual: Demo3DVisual, state: RendererState): Demo3DXm
 
     const aspect = state.serializedObjectById.get(id);
     if (aspect) {
-      found.push(aspect);
-    } else if (state.options.includeUnsupported) {
+      if (!isFalse(aspect.textOf("IsEnabled"))) {
+        found.push(aspect);
+      }
+      continue;
+    }
+    if (state.options.includeUnsupported) {
       warn(state, {
         code: "DEMO3D_THREE_MISSING_ASPECT",
         message: `Visual aspect ${id} does not exist in SerializedObjects.`,

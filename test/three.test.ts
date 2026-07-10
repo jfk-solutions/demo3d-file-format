@@ -81,6 +81,20 @@ describe("Three renderer adapter", () => {
     expect(renderable.userData.demo3d.aspectType).toBe("e3d:CylinderRendererAspect");
   });
 
+  it("does not render serialized aspects that Demo3D marks as disabled", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: disabledAspectXmlFixture }]),
+      { parseXml }
+    );
+
+    const group = await createDemo3DThreeGroup(parsed, { three, includeUnsupported: true });
+
+    expect(group.userData.demo3d.stats.meshes).toBe(0);
+    expect(group.userData.demo3d.stats.serializedRenderables).toBe(0);
+    expect(group.userData.demo3d.stats.unsupported).toBe(0);
+    expect(group.userData.demo3d.warnings).toEqual([]);
+  });
+
   it("creates renderable objects for TextVisual entries", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: textVisualXmlFixture }]), {
       parseXml
@@ -369,6 +383,18 @@ const aspectLinkedXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
           <MeshReference><Id>primitive-cylinder-template</Id></MeshReference>
         </E>
       </Renderables>
+    </E>
+  </SerializedObjects>
+</e3d:Demo3DProject>`;
+
+const disabledAspectXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:Visual"><Id>motor-left</Id><N>MotorLeft1</N><AS><E>disabled-cylinder</E></AS></e></C>
+  <SerializedObjects>
+    <E xsi:type="e3d:CylinderRendererAspect">
+      <Id>disabled-cylinder</Id><IsEnabled>0</IsEnabled>
+      <Renderables><E><Id>default-cylinder</Id><Length>1</Length><Radius>0.5</Radius><Slices>24</Slices><Angle>360</Angle>
+        <MeshReference><Id>default-cylinder-template</Id></MeshReference>
+      </E></Renderables>
     </E>
   </SerializedObjects>
 </e3d:Demo3DProject>`;
