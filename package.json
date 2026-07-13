@@ -1,6 +1,6 @@
 {
   "name": "@jfk-solutions/demo3d-file-format",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Browser-first TypeScript parser for Demo3D .demo3d and .raw3d files.",
   "type": "module",
   "sideEffects": false,
@@ -46,11 +46,11 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "@types/node": "^24.0.13",
+    "@types/node": "^26.1.1",
     "@types/three": "^0.185.1",
-    "@xmldom/xmldom": "^0.9.8",
+    "@xmldom/xmldom": "^0.9.10",
     "three": "^0.185.1",
-    "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
