@@ -1,6 +1,6 @@
 {
   "name": "@jfk-solutions/demo3d-file-format",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Browser-first TypeScript parser for Demo3D .demo3d project files.",
   "type": "module",
   "sideEffects": false,
