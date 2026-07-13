@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as three from "three";
 import { parseDemo3D } from "../src/index.js";
 import {
@@ -17,6 +17,10 @@ import {
 } from "./helpers.js";
 
 describe("Three renderer adapter", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("converts parsed Demo3D meshes into Three geometry", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture }]), { parseXml });
 
@@ -204,6 +208,76 @@ describe("Three renderer adapter", () => {
     expect(group.userData.demo3d.stats.directVisuals).toBe(1);
     expect(box.userData.demo3d.kind).toBe("direct-visual");
     expect(visual.scale.toArray()).toEqual([2, 3, 4]);
+
+    const position = (box as three.Mesh).geometry.getAttribute("position");
+    const normal = (box as three.Mesh).geometry.getAttribute("normal");
+    const uv = (box as three.Mesh).geometry.getAttribute("uv");
+    const frontFace = Array.from({ length: position.count }, (_, index) => index)
+      .filter((index) => normal.getZ(index) > 0.5)
+      .map((index) => ({
+        x: position.getX(index),
+        y: position.getY(index),
+        u: uv.getX(index),
+        v: uv.getY(index)
+      }));
+    expect(frontFace.find((vertex) => vertex.x < 0 && vertex.y > 0)).toMatchObject({ u: 0, v: 1 });
+    expect(frontFace.find((vertex) => vertex.x > 0 && vertex.y > 0)).toMatchObject({ u: 1, v: 1 });
+    expect(frontFace.find((vertex) => vertex.x < 0 && vertex.y < 0)).toMatchObject({ u: 0, v: 0 });
+  });
+
+  it("uses TextureLoader's Y flip for Demo3D texture images", async () => {
+    const loadedTexture = new three.Texture();
+    const load = vi.fn(() => loadedTexture);
+    class TestTextureLoader {
+      load(url: string): three.Texture {
+        return load(url);
+      }
+    }
+    vi.stubGlobal("document", {});
+    const threeWithTextureLoader = {
+      ...three,
+      TextureLoader: TestTextureLoader
+    } as unknown as typeof three;
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: texturedDirectVisualXmlFixture }]),
+      { parseXml }
+    );
+
+    const group = await createDemo3DThreeGroup(parsed, { three: threeWithTextureLoader });
+    const box = group.children[0]?.children[0] as three.Mesh;
+    const material = box.material as three.MeshStandardMaterial;
+
+    expect(load).toHaveBeenCalledOnce();
+    expect(load.mock.calls[0]?.[0]).toContain("data:image/png;base64,");
+    expect(material.map).toBe(loadedTexture);
+    expect(material.map?.flipY).toBe(true);
+  });
+
+  it("renders point-cloud buffers and sphere visuals", async () => {
+    const parsed = await parseDemo3D(createZip([
+      { name: "fixture.demo3d", data: pointCloudAndSphereXmlFixture },
+      { name: "Buffers_MD/points.bin", data: float32Bytes([1, 2, 3, -1, 0, -2]) }
+    ]), { parseXml });
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    let points: three.Points | undefined;
+    let sphere: three.Mesh | undefined;
+    group.traverse((object) => {
+      if (object instanceof three.Points) {
+        points = object;
+      }
+      if (object instanceof three.Mesh && object.geometry instanceof three.SphereGeometry) {
+        sphere = object;
+      }
+    });
+
+    expect(parsed.model.pointClouds).toHaveLength(1);
+    expect(parsed.model.unknownTypes.has("e3d:PointCloudVisual")).toBe(false);
+    expect(parsed.model.unknownTypes.has("e3d:SphereVisual")).toBe(false);
+    expect(group.userData.demo3d.stats.pointClouds).toBe(1);
+    expect(group.userData.demo3d.warnings).toEqual([]);
+    expect([...(points!.geometry.getAttribute("position").array)]).toEqual([1, 2, -3, -1, 0, 2]);
+    expect((points!.material as three.PointsMaterial).size).toBe(20);
+    expect(sphere!.geometry.parameters.radius).toBe(0.25);
   });
 
   it("renders box tubes as hollow yaw-pitch-roll oriented frames", async () => {
@@ -324,6 +398,30 @@ describe("Three renderer adapter", () => {
     expect(belts[2]?.geometry.boundingBox?.max.z).toBeCloseTo(1);
   });
 
+  it("extrudes custom straight-belt center profiles", async () => {
+    const parsed = await parseDemo3D(
+      createZip([{ name: "fixture.demo3d", data: customProfileBeltXmlFixture }]),
+      { parseXml }
+    );
+    const group = await createDemo3DThreeGroup(parsed, { three, renderProceduralBelts: true });
+    let belt: three.Mesh | undefined;
+    group.traverse((object) => {
+      if (object.userData.demo3d?.kind === "procedural-belt") {
+        belt = object as three.Mesh;
+      }
+    });
+
+    expect(group.userData.demo3d.stats.proceduralBelts).toBe(1);
+    expect(group.userData.demo3d.warnings).toEqual([]);
+    expect(belt).toBeDefined();
+    expect(belt!.geometry.boundingBox?.min.x).toBeCloseTo(0);
+    expect(belt!.geometry.boundingBox?.max.x).toBeCloseTo(2);
+    expect(belt!.geometry.boundingBox?.min.y).toBeCloseTo(-0.2);
+    expect(belt!.geometry.boundingBox?.max.y).toBeCloseTo(0);
+    expect(belt!.geometry.boundingBox?.min.z).toBeCloseTo(-0.035);
+    expect(belt!.geometry.boundingBox?.max.z).toBeCloseTo(0.035);
+  });
+
   it("renders connector-shaped injector belts and split diverter rollers", async () => {
     const parsed = await parseDemo3D(
       createZip([{ name: "fixture.demo3d", data: diverterWithInjectorBeltXmlFixture }]),
@@ -397,6 +495,15 @@ describe("Three renderer adapter", () => {
     expect(bounds.min.z).toBeCloseTo(-0.675);
     expect(bounds.max.z).toBeCloseTo(0.675);
     expect(((rack?.children[0] as three.Mesh).material as three.MeshStandardMaterial).color.getHex()).toBe(0xd3d3d3);
+  });
+
+  it("uses upright width when a rack serializes zero upright depth", async () => {
+    const fixture = liftRackXmlFixture.replace("<UprightDepth>0.05</UprightDepth>", "<UprightDepth>0</UprightDepth>");
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: fixture }]), { parseXml });
+    const group = await createDemo3DThreeGroup(parsed, { three, renderProceduralRacks: true });
+
+    expect(group.userData.demo3d.stats.proceduralRacks).toBe(1);
+    expect(group.userData.demo3d.warnings).toEqual([]);
   });
 
   it("renders profile-based support stands only when explicitly enabled", async () => {
@@ -771,6 +878,49 @@ const directVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
   </C>
 </e3d:Demo3DProject>`;
 
+const pointCloudAndSphereXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <PointCloudLibrary><PointClouds>
+    <e xsi:type="e3d:DictionaryEntry">
+      <key xsi:type="e3d:PointCloudReference"><Id>cloud-1</Id></key>
+      <val xsi:type="e3d:PointCloud">
+        <Name>Scan</Name><HasColoredVertices>0</HasColoredVertices><HasNormals>0</HasNormals>
+        <PointCloudPrimitives><E><Color>-16711936</Color><Points>points.bin</Points></E></PointCloudPrimitives>
+      </val>
+    </e>
+  </PointClouds></PointCloudLibrary>
+  <C>
+    <e xsi:type="e3d:PointCloudVisual"><Id>cloud-visual</Id><N>Cloud</N>
+      <P xsi:type="e3d:PointCloudProperties"><PointCloudRef>cloud-1</PointCloudRef><PointSize>20</PointSize></P>
+    </e>
+    <e xsi:type="e3d:SphereVisual"><Id>sphere-visual</Id><N>Sphere</N>
+      <P xsi:type="e3d:SphereProperties"><Radius>0.25</Radius>
+        <Material><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-65536</Diffuse></MeshMaterial></Material>
+      </P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+const texturedDirectVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <TextureLibrary><Textures>
+    <e xsi:type="e3d:DictionaryEntry">
+      <key xsi:type="e3d:TextureReference"><Id>box-texture</Id></key>
+      <val xsi:type="e3d:TextureImage">
+        <Name>Orientation marker</Name><Width>1</Width><Height>1</Height>
+        <e3d:Image><bytes>iVBORw0KGgo=</bytes></e3d:Image>
+      </val>
+    </e>
+  </Textures></TextureLibrary>
+  <C><e xsi:type="e3d:BoxVisual">
+    <Id>textured-box</Id><N>Textured box</N>
+    <P xsi:type="e3d:BoxProperties">
+      <Width>2</Width><Height>1</Height><Depth>0.1</Depth>
+      <Material><MeshMaterial xsi:type="e3d:MeshMaterial">
+        <Diffuse>-1</Diffuse><Texture><Id>box-texture</Id></Texture>
+      </MeshMaterial></Material>
+    </P>
+  </e></C>
+</e3d:Demo3DProject>`;
+
 const boxTubeXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
   <C>
     <e xsi:type="e3d:BoxTubeVisual">
@@ -846,6 +996,22 @@ const straightBeltXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </P>
     </e>
   </C>
+</e3d:Demo3DProject>`;
+
+const customProfileBeltXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:StraightBeltConveyor"><Id>profile-belt</Id><N>Profile Belt</N>
+    <P xsi:type="e3d:StraightBeltConveyorProperties">
+      <BeltLength>2</BeltLength><BeltWidth>0.07</BeltWidth><BeltDiameter>0.1</BeltDiameter>
+      <CenterProfile><Name>SingleRail</Name><Anchor xsi:type="e3d:Vector2">0.07|-0.015</Anchor>
+        <Polygons><e xsi:type="e3d:ExtrusionPolygon"><Points>
+          <e xsi:type="e3d:Vector2">0.035|-0.015</e><e xsi:type="e3d:Vector2">0.105|-0.015</e>
+          <e xsi:type="e3d:Vector2">0.105|-0.215</e><e xsi:type="e3d:Vector2">0.035|-0.215</e>
+        </Points></e></Polygons>
+      </CenterProfile>
+      <SurfaceMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-8355712</Diffuse></MeshMaterial></SurfaceMaterial>
+      <SurfaceSideMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-4144960</Diffuse></MeshMaterial></SurfaceSideMaterial>
+    </P>
+  </e></C>
 </e3d:Demo3DProject>`;
 
 const defaultedBeltXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

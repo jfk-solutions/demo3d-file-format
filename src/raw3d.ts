@@ -26,6 +26,8 @@ export class Raw3DNode {
     public readonly meshIndex: number | undefined,
     public readonly layerIndex: number | undefined,
     public readonly materialIndices: readonly number[],
+    public readonly textIndex: number | undefined,
+    public readonly interactionMode: number | undefined,
     public readonly location: readonly number[],
     public readonly rotation: readonly number[],
     public readonly scale: readonly number[],
@@ -67,6 +69,31 @@ export class Raw3DTexture {
   ) {}
 }
 
+export class Raw3DText {
+  constructor(
+    public readonly value: string,
+    public readonly size: number,
+    public readonly materialIndex: number | undefined,
+    public readonly verticalAlign: number,
+    public readonly startPosition: readonly number[],
+    public readonly endPosition: readonly number[],
+    public readonly xml: Demo3DXmlElement
+  ) {}
+}
+
+export class Raw3DLight {
+  constructor(
+    public readonly nodeIndex: number | undefined,
+    public readonly materialIndex: number | undefined,
+    public readonly enabled: boolean,
+    public readonly type: string,
+    public readonly attenuationConstant: number,
+    public readonly attenuationLinear: number,
+    public readonly attenuationQuadratic: number,
+    public readonly xml: Demo3DXmlElement
+  ) {}
+}
+
 export class Raw3DVertexAttribute {
   constructor(
     public readonly usage: string,
@@ -90,6 +117,7 @@ export class Raw3DVertexBuffer {
 export class Raw3DIndexBuffer {
   constructor(
     public readonly path: string,
+    public readonly format: string,
     public readonly data: Uint8Array | undefined,
     public readonly xml: Demo3DXmlElement
   ) {}
@@ -112,6 +140,8 @@ export class Raw3DProject {
     public readonly layers: readonly Raw3DLayer[],
     public readonly materials: readonly Raw3DMaterial[],
     public readonly textures: readonly Raw3DTexture[],
+    public readonly textObjects: readonly Raw3DText[],
+    public readonly lights: readonly Raw3DLight[],
     public readonly meshes: readonly Raw3DMesh[],
     public readonly vertexBuffers: readonly Raw3DVertexBuffer[],
     public readonly indexBuffers: readonly Raw3DIndexBuffer[]
@@ -201,6 +231,8 @@ async function extractRaw3DProject(
       integerAttribute(element, "Mesh"),
       integerAttribute(element, "Layer"),
       integerList(attribute(element, "Materials")),
+      integerAttribute(element, "Text"),
+      integerAttribute(element, "InteractionMode"),
       numberList(attribute(element, "Location")),
       numberList(attribute(element, "Rotation")),
       numberList(attribute(element, "Scale"), [1, 1, 1]),
@@ -229,6 +261,25 @@ async function extractRaw3DProject(
     textureElements.map((element, index) => new Raw3DTexture(
       attribute(element, "Path") ?? "",
       textureData[index],
+      element
+    )),
+    (root.child("TextObjects")?.childrenNamed("Text") ?? []).map((element) => new Raw3DText(
+      attribute(element, "Value") ?? "",
+      numberAttribute(element, "Size", 0.1),
+      integerAttribute(element, "Material"),
+      integerAttribute(element, "VerticalAlign") ?? 0,
+      numberList(attribute(element, "StartPosition")),
+      numberList(attribute(element, "EndPosition")),
+      element
+    )),
+    (root.child("Lights")?.childrenNamed("Light") ?? []).map((element) => new Raw3DLight(
+      integerAttribute(element, "Node"),
+      integerAttribute(element, "Material"),
+      booleanAttribute(element, "Enabled", true),
+      attribute(element, "Type") ?? "Directional",
+      numberAttribute(element, "AttenuationConstant", 1),
+      numberAttribute(element, "AttenuationLinear", 0),
+      numberAttribute(element, "AttenuationQuadratic", 0),
       element
     )),
     (root.child("Meshes")?.childrenNamed("Mesh") ?? []).map((element) => new Raw3DMesh(
@@ -261,6 +312,7 @@ async function extractRaw3DProject(
     }),
     indexBufferElements.map((element, index) => new Raw3DIndexBuffer(
       attribute(element, "Path") ?? "",
+      attribute(element, "Format") ?? "UInt16",
       indexData[index],
       element
     ))
@@ -298,6 +350,9 @@ function integerList(value: string | undefined): number[] {
 }
 
 function vectorComponentCount(type: string): number {
+  if (/^(Single|Float|Double|Half)$/i.test(type)) {
+    return 1;
+  }
   const match = /Vector([1-4])$/i.exec(type);
   return match ? Number.parseInt(match[1]!, 10) : 3;
 }

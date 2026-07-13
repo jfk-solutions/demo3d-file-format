@@ -8,6 +8,7 @@ import {
   Demo3DMaterial,
   Demo3DMesh,
   Demo3DPackage,
+  Demo3DPointCloud,
   Demo3DProject,
   Demo3DPhotoEye,
   Demo3DResource,
@@ -89,6 +90,7 @@ export interface Demo3DThreeStats {
   unreconstructedProceduralVisuals: number;
   imageVisuals: number;
   lights: number;
+  pointClouds: number;
   missingGeometryPlaceholders: number;
   serializedRenderables: number;
   unsupported: number;
@@ -118,6 +120,7 @@ interface RendererState {
   readonly options: Demo3DThreeRendererOptions;
   readonly warnings: Demo3DThreeWarning[];
   readonly meshById: Map<string, Demo3DMesh>;
+  readonly pointCloudById: Map<string, Demo3DPointCloud>;
   readonly serializedObjectById: Map<string, Demo3DXmlElement>;
   readonly textureImageById: Map<string, Demo3DTextureImage>;
   readonly drawingBlockById: Map<string, Demo3DXmlElement>;
@@ -319,6 +322,9 @@ function createState(
     options,
     warnings: [],
     meshById: new Map(project.meshes.flatMap((mesh) => (mesh.id ? [[mesh.id, mesh] as const] : []))),
+    pointCloudById: new Map(project.pointClouds.flatMap((pointCloud) =>
+      pointCloud.id ? [[pointCloud.id, pointCloud] as const] : []
+    )),
     serializedObjectById: indexSerializedObjects(project),
     textureImageById: indexTextureImages(project),
     drawingBlockById: indexDrawingBlocks(project),
@@ -354,6 +360,7 @@ function createState(
       unreconstructedProceduralVisuals: 0,
       imageVisuals: 0,
       lights: 0,
+      pointClouds: 0,
       missingGeometryPlaceholders: 0,
       serializedRenderables: 0,
       unsupported: 0
@@ -617,6 +624,10 @@ function createDirectVisualObject(
     return createImportedImageObject(visual, state);
   }
 
+  if (visual.typeName === "e3d:PointCloudVisual") {
+    return createPointCloudObject(visual, state);
+  }
+
   if (
     visual.typeName === "e3d:StraightBeltConveyor" ||
     visual.typeName === "e3d:CurveBeltConveyor" ||
@@ -666,6 +677,96 @@ function createDirectVisualObject(
   state.stats.meshes += 1;
   state.stats.directVisuals += 1;
   return object;
+}
+
+function createPointCloudObject(
+  visual: Demo3DVisual,
+  state: RendererState
+): Three.Object3D | undefined {
+  const referenceId = visual.properties?.textOf("PointCloudRef");
+  const pointCloud = referenceId ? state.pointCloudById.get(referenceId) : undefined;
+  if (!pointCloud) {
+    warn(state, {
+      code: "DEMO3D_THREE_MISSING_POINT_CLOUD",
+      message: `Point cloud reference ${referenceId ?? "<missing>"} could not be resolved.`,
+      sourceId: visual.id,
+      sourceType: visual.typeName,
+      xmlPath: visual.xml.path
+    });
+    return undefined;
+  }
+
+  const group = new state.three.Group();
+  group.name = visual.displayName ?? pointCloud.name ?? referenceId ?? visual.typeName;
+  const fallbackColor = primaryMaterial(visual)?.diffuse;
+  const pointSize = Math.min(128, Math.max(1, numberChild(visual.properties!, "PointSize", 1)));
+  for (const [primitiveIndex, primitive] of pointCloud.primitives.entries()) {
+    const bufferName = primitive.pointsBufferName;
+    const buffer = bufferName ? state.bufferByName.get(bufferName.toLowerCase()) : undefined;
+    if (!buffer) {
+      warn(state, {
+        code: "DEMO3D_THREE_MISSING_POINT_CLOUD_BUFFER",
+        message: `Point cloud buffer ${bufferName ?? "<missing>"} could not be resolved.`,
+        sourceId: visual.id,
+        sourceType: visual.typeName,
+        xmlPath: primitive.xml.path
+      });
+      continue;
+    }
+    if (buffer.byteLength % 12 !== 0) {
+      warn(state, {
+        code: "DEMO3D_THREE_INVALID_POINT_CLOUD_BUFFER",
+        message: `Point cloud buffer ${bufferName} has ${buffer.byteLength} bytes; expected packed Float32 XYZ triples.`,
+        sourceId: visual.id,
+        sourceType: visual.typeName,
+        xmlPath: primitive.xml.path
+      });
+      continue;
+    }
+
+    const positions = new Float32Array(buffer.byteLength / 4);
+    const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    for (let index = 0; index < positions.length; index += 3) {
+      positions[index] = view.getFloat32(index * 4, true);
+      positions[index + 1] = view.getFloat32((index + 1) * 4, true);
+      positions[index + 2] = -view.getFloat32((index + 2) * 4, true);
+    }
+    const geometry = new state.three.BufferGeometry();
+    geometry.setAttribute("position", new state.three.BufferAttribute(positions, 3));
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    const material = new state.three.PointsMaterial({
+      color: demo3dColorToHex(primitive.color ?? fallbackColor ?? -1),
+      size: pointSize,
+      sizeAttenuation: false
+    });
+    const points = new state.three.Points(geometry, material);
+    points.name = pointCloud.primitives.length > 1 ? `${group.name} ${primitiveIndex + 1}` : group.name;
+    points.userData.demo3d = {
+      kind: "point-cloud-primitive",
+      pointCloudId: pointCloud.id,
+      bufferName,
+      pointCount: positions.length / 3
+    };
+    group.add(points);
+    state.stats.geometries += 1;
+    state.stats.materials += 1;
+  }
+
+  if (group.children.length === 0) {
+    return undefined;
+  }
+  group.userData.demo3d = {
+    kind: "point-cloud",
+    id: visual.id,
+    pointCloudId: pointCloud.id,
+    typeName: visual.typeName,
+    xmlPath: visual.xml.path
+  };
+  state.stats.groups += 1;
+  state.stats.directVisuals += 1;
+  state.stats.pointClouds += 1;
+  return group;
 }
 
 function createBeltConveyorObject(
@@ -928,6 +1029,7 @@ interface ProceduralBelt {
   readonly zOffset: number;
   readonly startCap: BeltCap;
   readonly endCap: BeltCap;
+  readonly centerProfile?: Demo3DExtrusionProfile;
   readonly surfaceMaterial?: Demo3DMaterial;
   readonly sideMaterial?: Demo3DMaterial;
 }
@@ -938,17 +1040,10 @@ function readProceduralBelt(visual: Demo3DVisual, state: RendererState): Procedu
     return undefined;
   }
 
-  const centerProfile = properties.child("CenterProfile");
-  if (centerProfile && (centerProfile.children.length > 0 || centerProfile.text.length > 0)) {
-    warn(state, {
-      code: "DEMO3D_THREE_UNSUPPORTED_BELT_PROFILE",
-      message: "Straight belt conveyors with a custom CenterProfile are not supported.",
-      sourceId: visual.id,
-      sourceType: visual.typeName,
-      xmlPath: visual.xml.path
-    });
-    return undefined;
-  }
+  const centerProfileElement = properties.child("CenterProfile");
+  const centerProfile = centerProfileElement && centerProfileElement.children.length > 0
+    ? new Demo3DExtrusionProfile(centerProfileElement)
+    : undefined;
 
   const startPadding = numberChild(properties, "StartPadding", 0);
   const endPadding = numberChild(properties, "EndPadding", 0);
@@ -996,6 +1091,7 @@ function readProceduralBelt(visual: Demo3DVisual, state: RendererState): Procedu
     zOffset: (rightPadding - leftPadding) / 2,
     startCap,
     endCap,
+    centerProfile,
     surfaceMaterial,
     sideMaterial
   };
@@ -1020,20 +1116,59 @@ function beltCap(value: string | undefined, visual: Demo3DVisual, state: Rendere
 }
 
 function getProceduralBeltGeometry(belt: ProceduralBelt, state: RendererState): Three.BufferGeometry {
-  const key = `belt:${belt.length}:${belt.width}:${belt.thickness}:${belt.endRadius}:${belt.xOffset}:${belt.zOffset}:${belt.startCap}:${belt.endCap}`;
+  const profileKey = belt.centerProfile?.polygons
+    .map((polygon) => polygon.points.map((point) => `${point.x},${point.y}`).join(";"))
+    .join("/") ?? "";
+  const key = `belt:${belt.length}:${belt.width}:${belt.thickness}:${belt.endRadius}:${belt.xOffset}:${belt.zOffset}:${belt.startCap}:${belt.endCap}:${profileKey}`;
   const cached = state.primitiveGeometryCache.get(key);
   if (cached) {
     return cached;
   }
 
-  const geometry = belt.startCap === "Box" && belt.endCap === "Box"
-    ? createRectangularBeltGeometry(belt, state)
-    : createRoundedBeltGeometry(belt, state);
-  convertTriangleGeometryToThreeCoordinates(geometry);
+  const profilePolygon = belt.centerProfile?.polygons.find((polygon) => polygon.points.length >= 3);
+  const geometry = belt.centerProfile && profilePolygon
+    ? createProfileBeltGeometry(belt, belt.centerProfile, profilePolygon, state)
+    : belt.startCap === "Box" && belt.endCap === "Box"
+      ? createRectangularBeltGeometry(belt, state)
+      : createRoundedBeltGeometry(belt, state);
+  if (!profilePolygon) {
+    convertTriangleGeometryToThreeCoordinates(geometry);
+  }
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   state.primitiveGeometryCache.set(key, geometry);
   state.stats.geometries += 1;
+  return geometry;
+}
+
+function createProfileBeltGeometry(
+  belt: ProceduralBelt,
+  profile: Demo3DExtrusionProfile,
+  polygon: Demo3DExtrusionPolygon,
+  state: RendererState
+): Three.BufferGeometry {
+  const shape = new state.three.Shape();
+  polygon.points.forEach((point, index) => {
+    const lateral = -(point.x - profile.anchor.x);
+    const vertical = point.y - profile.anchor.y;
+    if (index === 0) {
+      shape.moveTo(lateral, vertical);
+    } else {
+      shape.lineTo(lateral, vertical);
+    }
+  });
+  shape.closePath();
+  const geometry = new state.three.ExtrudeGeometry(shape, {
+    bevelEnabled: false,
+    curveSegments: 1,
+    depth: belt.length,
+    steps: 1
+  });
+  geometry.rotateY(Math.PI / 2);
+  geometry.translate(belt.xOffset, 0, belt.zOffset);
+  for (const group of geometry.groups) {
+    group.materialIndex = group.materialIndex === 0 ? 1 : 0;
+  }
   return geometry;
 }
 
@@ -1284,7 +1419,8 @@ function createRackObject(visual: Demo3DVisual, state: RendererState): Three.Gro
 
   const frameHeight = numberChild(properties, "FrameHeight", 0);
   const uprightWidth = numberChild(properties, "UprightWidth", 0.05);
-  const uprightDepth = numberChild(properties, "UprightDepth", 0.05);
+  const serializedUprightDepth = numberChild(properties, "UprightDepth", 0.05);
+  const uprightDepth = serializedUprightDepth > 0 ? serializedUprightDepth : uprightWidth;
   const frameDepth = numberChildOptional(properties, "FrameDepth") ?? numberChild(properties, "BayDepth", 0);
   const strutWidth = numberChild(properties, "StrutWidth", 0.05);
   if (frameHeight <= 0 || frameDepth <= 0 || uprightWidth <= 0 || uprightDepth <= 0 || strutWidth <= 0) {
@@ -2328,6 +2464,12 @@ function getDirectVisualGeometry(visual: Demo3DVisual, state: RendererState): Th
       degreesToRadians(numberChild(properties, "StartAngle", 0)),
       degreesToRadians(numberChild(properties, "Angle", 360))
     );
+  } else if (visual.typeName === "e3d:SphereVisual") {
+    geometry = new state.three.SphereGeometry(
+      numberChild(properties, "Radius", 0.5),
+      32,
+      16
+    );
   } else if (visual.typeName === "e3d:WedgeVisual") {
     geometry = createWedgeGeometry(
       numberChild(properties, "Width", 1),
@@ -2341,7 +2483,17 @@ function getDirectVisualGeometry(visual: Demo3DVisual, state: RendererState): Th
     return undefined;
   }
 
-  convertTriangleGeometryToThreeCoordinates(geometry);
+  // BoxGeometry and the box-tube extrusion are already created in Three's
+  // coordinate system. Reflecting these symmetric, Three-native geometries
+  // swaps their front/back UV layouts even though their bounds do not change.
+  // Other direct primitives still need the Demo3D-to-Three Z reflection.
+  if (
+    visual.typeName !== "e3d:BoxVisual" &&
+    visual.typeName !== "e3d:BoxTubeVisual" &&
+    visual.typeName !== "e3d:SphereVisual"
+  ) {
+    convertTriangleGeometryToThreeCoordinates(geometry);
+  }
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   state.primitiveGeometryCache.set(key, geometry);
@@ -2631,7 +2783,9 @@ function getPrimitiveGeometry(
     return undefined;
   }
 
-  convertTriangleGeometryToThreeCoordinates(geometry);
+  if (type !== "e3d:BoxRendererAspect" && type !== "e3d:ContainerRendererAspect") {
+    convertTriangleGeometryToThreeCoordinates(geometry);
+  }
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   state.primitiveGeometryCache.set(key, geometry);
@@ -2864,7 +3018,9 @@ function getTexture(textureReference: string, state: RendererState): Three.Textu
     texture.colorSpace = state.three.SRGBColorSpace;
   }
   texture.name = image.name ?? image.id;
-  texture.flipY = false;
+  // Demo3D's generated primitive UVs use the conventional bottom-left texture
+  // origin expected by Three's TextureLoader.
+  texture.flipY = true;
   state.textureCache.set(textureReference, texture);
   state.stats.textures += 1;
   return texture;

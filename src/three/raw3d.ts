@@ -30,6 +30,8 @@ export interface Raw3DThreeStats {
   geometries: number;
   materials: number;
   textures: number;
+  textObjects: number;
+  lights: number;
   missingResources: number;
 }
 
@@ -72,6 +74,8 @@ export async function createRaw3DThreeGroup(
     geometries: 0,
     materials: project.materials.length,
     textures: 0,
+    textObjects: project.textObjects.length,
+    lights: 0,
     missingResources: 0
   };
   const warn = (warning: Raw3DThreeWarning): void => {
@@ -93,11 +97,22 @@ export async function createRaw3DThreeGroup(
     const object = new three.Group();
     object.name = node.name;
     applyTransform(object, node);
+    const text = node.textIndex === undefined ? undefined : project.textObjects[node.textIndex];
     object.userData.raw3d = {
       kind: "node",
       index: node.index,
       meshIndex: node.meshIndex,
       layerIndex: node.layerIndex,
+      textIndex: node.textIndex,
+      text: text ? {
+        value: text.value,
+        size: text.size,
+        materialIndex: text.materialIndex,
+        verticalAlign: text.verticalAlign,
+        startPosition: text.startPosition,
+        endPosition: text.endPosition
+      } : undefined,
+      interactionMode: node.interactionMode,
       customAttributes: Object.fromEntries(node.customAttributes)
     };
     objects.set(node.index, object);
@@ -139,6 +154,56 @@ export async function createRaw3DThreeGroup(
         }
       }
     }
+  }
+
+  for (const source of project.lights) {
+    if (!source.enabled) {
+      continue;
+    }
+    const parent = source.nodeIndex === undefined ? undefined : objects.get(source.nodeIndex);
+    if (!parent) {
+      warn({
+        code: "RAW3D_LIGHT_NODE_MISSING",
+        message: `Light references missing node ${String(source.nodeIndex)}.`,
+        nodeIndex: source.nodeIndex
+      });
+      continue;
+    }
+    const material = source.materialIndex === undefined ? undefined : project.materials[source.materialIndex];
+    const color = material
+      ? new three.Color(clamp01(material.red), clamp01(material.green), clamp01(material.blue))
+      : new three.Color(0xffffff);
+    let light: Three.Light;
+    switch (source.type.toLowerCase()) {
+      case "ambient":
+        light = new three.AmbientLight(color, 1);
+        break;
+      case "point":
+        light = new three.PointLight(color, 1, 0, 2);
+        break;
+      case "spot":
+        light = new three.SpotLight(color, 1);
+        break;
+      default: {
+        const directional = new three.DirectionalLight(color, 1);
+        directional.target.position.set(0, 0, -1);
+        parent.add(directional.target);
+        light = directional;
+        break;
+      }
+    }
+    light.name = `${parent.name} ${source.type} light`;
+    light.userData.raw3d = {
+      kind: "light",
+      nodeIndex: source.nodeIndex,
+      materialIndex: source.materialIndex,
+      type: source.type,
+      attenuationConstant: source.attenuationConstant,
+      attenuationLinear: source.attenuationLinear,
+      attenuationQuadratic: source.attenuationQuadratic
+    };
+    parent.add(light);
+    stats.lights += 1;
   }
 
   for (const node of project.nodes) {
@@ -219,9 +284,11 @@ export function decodeRaw3DThreeGeometry(
     if (!indexBuffer?.data) {
       throw new Error(`index buffer ${indexBufferIndex} is missing`);
     }
-    const elementSize = vertexCount > 0xffff ? 4 : 2;
+    const elementSize = /32/i.test(indexBuffer.format) ? 4 : 2;
     if (indexBuffer.data.byteLength % elementSize !== 0) {
-      throw new Error(`index buffer ${indexBufferIndex} has invalid byte length ${indexBuffer.data.byteLength}`);
+      throw new Error(
+        `index buffer ${indexBufferIndex} (${indexBuffer.format}) has invalid byte length ${indexBuffer.data.byteLength}`
+      );
     }
     const count = indexBuffer.data.byteLength / elementSize;
     const indices = elementSize === 4 ? new Uint32Array(count) : new Uint16Array(count);
@@ -312,6 +379,9 @@ async function loadTextures(
       const texture = new three.Texture(bitmap);
       texture.name = item.texture.path;
       texture.colorSpace = item.color ? three.SRGBColorSpace : three.NoColorSpace;
+      // RAW3D exports V=0 at the top of the image. Keep the decoded bitmap in
+      // its original orientation and disable Three's default Y flip.
+      texture.flipY = false;
       texture.needsUpdate = true;
       loaded.set(key, texture);
       stats.textures += 1;

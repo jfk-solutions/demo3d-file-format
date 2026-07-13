@@ -124,6 +124,43 @@ export class Demo3DMesh extends Demo3DTypedObject {
   }
 }
 
+export class Demo3DPointCloudPrimitive {
+  constructor(public readonly xml: Demo3DXmlElement) {}
+
+  get color(): number | undefined {
+    return numberValue(this.xml.valueOf("Color"));
+  }
+
+  get pointsBufferName(): string | undefined {
+    return this.xml.textOf("Points");
+  }
+}
+
+export class Demo3DPointCloud extends Demo3DTypedObject {
+  private primitivesCache?: readonly Demo3DPointCloudPrimitive[];
+
+  constructor(typeName: string, xml: Demo3DXmlElement, private readonly referenceId?: string) {
+    super(typeName, xml);
+  }
+
+  override get id(): string | undefined {
+    return this.referenceId ?? super.id ?? this.name;
+  }
+
+  get hasColoredVertices(): boolean {
+    return booleanValue(this.xml.valueOf("HasColoredVertices"), false);
+  }
+
+  get hasNormals(): boolean {
+    return booleanValue(this.xml.valueOf("HasNormals"), false);
+  }
+
+  get primitives(): readonly Demo3DPointCloudPrimitive[] {
+    return this.primitivesCache ??= (this.xml.child("PointCloudPrimitives")?.children ?? [])
+      .map((primitive) => new Demo3DPointCloudPrimitive(primitive));
+  }
+}
+
 export class Demo3DVisual extends Demo3DTypedObject {
   readonly displayName?: string;
   readonly layer?: string;
@@ -436,6 +473,7 @@ export class Demo3DProject {
     public readonly root: Demo3DXmlElement,
     public readonly header: Demo3DHeader,
     public readonly meshes: readonly Demo3DMesh[],
+    public readonly pointClouds: readonly Demo3DPointCloud[],
     public readonly layers: readonly Demo3DLayer[],
     public readonly visuals: readonly Demo3DVisual[],
     public readonly typedObjects: readonly Demo3DTypedObject[],
@@ -468,6 +506,7 @@ export function extractProject(root: Demo3DXmlElement): Demo3DProject {
     root,
     Demo3DHeader.fromXml(root),
     extractMeshes(root),
+    extractPointClouds(root),
     extractLayers(root),
     extractVisualRoots(root),
     typedObjects,
@@ -517,6 +556,20 @@ function extractMeshes(root: Demo3DXmlElement): Demo3DMesh[] {
   }
 
   return meshes;
+}
+
+function extractPointClouds(root: Demo3DXmlElement): Demo3DPointCloud[] {
+  const entries = root.child("PointCloudLibrary")?.child("PointClouds")?.children ?? [];
+  const pointClouds: Demo3DPointCloud[] = [];
+  for (const entry of entries) {
+    const value = entry.child("val");
+    if (value?.xsiType !== "e3d:PointCloud") {
+      continue;
+    }
+    const id = entry.child("key")?.textOf("Id") ?? entry.child("key")?.text ?? value.textOf("Name");
+    pointClouds.push(new Demo3DPointCloud(value.xsiType, value, id));
+  }
+  return pointClouds;
 }
 
 function findVisualMaterials(root: Demo3DXmlElement): Demo3DXmlElement[] {
@@ -706,6 +759,7 @@ function firstTypedMaterial(root: Demo3DXmlElement): Demo3DMaterial | undefined 
 registerDemo3DType("e3d:Visual", Demo3DVisual);
 registerDemo3DType("e3d:Mesh", Demo3DMesh);
 registerDemo3DType("e3d:MeshMaterial", Demo3DMaterial);
+registerDemo3DType("e3d:PointCloud", Demo3DPointCloud);
 registerDemo3DType("e3d:Layer", Demo3DLayer);
 registerDemo3DType("e3d:Vector2", Demo3DVector2);
 registerDemo3DType("e3d:ExtrusionPolygon", Demo3DExtrusionPolygon);
@@ -722,6 +776,9 @@ for (const visualType of [
   "e3d:ContainerVisual",
   "e3d:CurveBeltConveyor",
   "e3d:CurveRollerConveyor",
+  "e3d:ChainConveyor",
+  "e3d:ChainTransferVisual",
+  "e3d:ChainTurntableConveyor",
   "e3d:CylinderVisual",
   "e3d:DiverterRollerConveyor",
   "e3d:ImportedImageVisual",
@@ -729,12 +786,50 @@ for (const visualType of [
   "e3d:InjectorBeltConveyor",
   "e3d:InjectorRollerConveyor",
   "e3d:LightVisual",
+  "e3d:FloorVisual",
+  "e3d:GroupObject",
+  "e3d:HandrailVisual",
+  "e3d:LoadCreatorVisual",
+  "e3d:PointCloudVisual",
   "e3d:PrimitivesVisual",
   "e3d:RackVisual",
   "e3d:StraightBeltConveyor",
   "e3d:StraightRollerConveyor",
+  "e3d:ShelfVisual",
+  "e3d:SphereVisual",
+  "e3d:StairVisual",
   "e3d:TextVisual",
   "e3d:WedgeVisual"
 ]) {
   registerDemo3DType(visualType, Demo3DVisual);
+}
+
+for (const genericType of [
+  "e3d:BoxProperties",
+  "e3d:BoxTubeProperties",
+  "e3d:ChainConveyorProperties",
+  "e3d:ChainTransferProperties",
+  "e3d:ChainTurntableConveyorProperties",
+  "e3d:ContainerProperties",
+  "e3d:CylinderProperties",
+  "e3d:DrawingBlockProperties",
+  "e3d:FloorProperties",
+  "e3d:GroupProperties",
+  "e3d:HandrailProperties",
+  "e3d:ImportedImageProperties",
+  "e3d:ImportedMeshProperties",
+  "e3d:LightProperties",
+  "e3d:LoadCreatorProperties",
+  "e3d:PointCloudProperties",
+  "e3d:RackProperties",
+  "e3d:ShelfProperties",
+  "e3d:SphereProperties",
+  "e3d:StairProperties",
+  "e3d:StraightBeltConveyorProperties",
+  "e3d:StraightRollerConveyorProperties",
+  "e3d:TextProperties",
+  "e3d:VisualProperties",
+  "e3d:WedgeProperties"
+]) {
+  registerDemo3DType(genericType, Demo3DTypedObject);
 }
