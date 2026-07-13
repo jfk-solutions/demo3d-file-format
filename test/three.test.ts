@@ -206,6 +206,60 @@ describe("Three renderer adapter", () => {
     expect(visual.scale.toArray()).toEqual([2, 3, 4]);
   });
 
+  it("renders box tubes as hollow yaw-pitch-roll oriented frames", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: boxTubeXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    const visual = group.children[0]!;
+    let tube: three.Mesh | undefined;
+    visual.traverse((object) => {
+      if (object.userData.demo3d?.kind === "direct-visual") {
+        tube = object as three.Mesh;
+      }
+    });
+
+    expect(tube).toBeDefined();
+    tube!.geometry.computeBoundingBox();
+    const size = tube!.geometry.boundingBox!.getSize(new three.Vector3());
+    expect(size.x).toBeCloseTo(0.6, 5);
+    expect(size.y).toBeCloseTo(0.1, 5);
+    expect(size.z).toBeCloseTo(1, 5);
+
+    const probe = new three.Mesh(
+      tube!.geometry,
+      new three.MeshBasicMaterial({ side: three.DoubleSide })
+    );
+    probe.updateMatrixWorld(true);
+    expect(new three.Raycaster(
+      new three.Vector3(0, -1, 0),
+      new three.Vector3(0, 1, 0)
+    ).intersectObject(probe)).toHaveLength(0);
+    expect(new three.Raycaster(
+      new three.Vector3(0.295, -1, 0),
+      new three.Vector3(0, 1, 0)
+    ).intersectObject(probe).length).toBeGreaterThan(0);
+
+    expect(visual.rotation.order).toBe("YXZ");
+    const localDepthAxis = new three.Vector3(0, 0, 1).applyQuaternion(visual.quaternion);
+    expect(localDepthAxis.y).toBeCloseTo(1, 5);
+  });
+
+  it("keeps TransferStrand length horizontal under Demo3D yaw-pitch-roll", async () => {
+    const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: transferStrandXmlFixture }]), {
+      parseXml
+    });
+
+    const group = await createDemo3DThreeGroup(parsed, { three });
+    group.updateWorldMatrix(true, true);
+    const size = new three.Box3().setFromObject(group.children[0]!).getSize(new three.Vector3());
+
+    expect(size.x).toBeCloseTo(0.03, 5);
+    expect(size.y).toBeCloseTo(0.078, 5);
+    expect(size.z).toBeCloseTo(0.38, 5);
+  });
+
   it("renders procedural straight belts only when explicitly enabled", async () => {
     const parsed = await parseDemo3D(createZip([{ name: "fixture.demo3d", data: straightBeltXmlFixture }]), {
       parseXml
@@ -715,6 +769,33 @@ const directVisualXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/
       </P>
     </e>
   </C>
+</e3d:Demo3DProject>`;
+
+const boxTubeXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C>
+    <e xsi:type="e3d:BoxTubeVisual">
+      <LR>-7.989673|1.6045084|-13.937014|1.5707963|-1.5707954|-3.1415925</LR>
+      <Id>height-check</Id><N>A-1410</N>
+      <P xsi:type="e3d:BoxTubeProperties">
+        <Width>0.6</Width><Height>0.1</Height><Depth>1</Depth>
+        <OuterMaterial><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-16777216</Diffuse></MeshMaterial></OuterMaterial>
+      </P>
+    </e>
+  </C>
+</e3d:Demo3DProject>`;
+
+const transferStrandXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+  <C><e xsi:type="e3d:Visual">
+    <LR>0.07499963|-0.026000023|0.014998474|-1.570796|1.570799|3.141592</LR>
+    <Id>transfer-strand</Id><N>TransferStrand</N><AS><E>transfer-strand-aspect</E></AS>
+    <P xsi:type="e3d:VisualProperties"><Type>TransferStrand</Type></P>
+  </e></C>
+  <SerializedObjects><E xsi:type="e3d:BoxRendererAspect">
+    <Id>transfer-strand-aspect</Id><Renderables><E>
+      <Depth>0.078</Depth><Height>0.03</Height><Width>0.38</Width>
+      <MeshReference><Id>box-template</Id></MeshReference>
+    </E></Renderables>
+  </E></SerializedObjects>
 </e3d:Demo3DProject>`;
 
 const hiddenLayerXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">

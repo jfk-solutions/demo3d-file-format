@@ -1,6 +1,7 @@
 # demo3d-file-format
 
-Browser-first TypeScript parser for Demo3D/Emulate3D `.demo3d` project files.
+Browser-first TypeScript parser and Three.js adapter for Demo3D/Emulate3D
+`.demo3d` project files and render-ready `.raw3d` scene files.
 
 The parser accepts an `ArrayBuffer`, `Uint8Array`, or `DataView`, reads the outer ZIP package, extracts the nested XML model document, and returns a lossless object structure with typed helpers for the pieces most useful to rendering adapters.
 
@@ -24,6 +25,26 @@ console.log(parsed.model.meshes.length);
 console.log(parsed.model.visuals.length);
 ```
 
+RAW3D scenes use a separate, strongly typed API because their `Model.xml`, flat
+node hierarchy, and external vertex/index buffers differ from the editable
+Demo3D project schema:
+
+```ts
+import { parseRaw3D } from "demo3d-file-format";
+import { createRaw3DThreeGroup } from "demo3d-file-format/three";
+
+const parsed = await parseRaw3D(await file.arrayBuffer());
+const group = await createRaw3DThreeGroup(parsed);
+
+console.log(parsed.model.nodes.length);
+console.log(parsed.model.meshes.length);
+```
+
+`parseRaw3D` reads `Model.xml`, `Thumbnail.png`, `Aspects.json`, textures, and
+all referenced `v*.dat` and `i*.dat` buffers. The Three.js adapter preserves the
+RAW3D node hierarchy, transforms, material assignments, texture coordinates,
+submeshes, and shadow flags.
+
 Runtime code has no production dependencies and uses browser APIs only. ZIP method `8` entries are decompressed with `DecompressionStream("deflate-raw")`.
 
 The default single-pass XML parser builds the Demo3D object tree directly, avoiding the time and memory cost of an intermediate browser DOM. For unusual XML inputs, callers can opt into the browser parser or inject another DOM implementation:
@@ -43,7 +64,7 @@ The Three.js smoke demo must be opened through a local HTTP server, not directly
 npm run demo:three
 ```
 
-Then open the printed `http://127.0.0.1:.../examples/three-render-smoke.html` URL and choose a `.demo3d` file.
+Then open the printed `http://127.0.0.1:.../examples/three-render-smoke.html` URL and choose a `.demo3d` or `.raw3d` file.
 
 The parser root remains independent of Three.js. Renderer features that require
 procedural reconstruction are opt-in through the `demo3d-file-format/three`
@@ -147,3 +168,5 @@ up archive/XML parsing and may have higher first-frame shader compilation cost.
 - Full XML tree preservation.
 - Core typed classes for project header, visuals, meshes, materials, resources, and unknown typed entries.
 - Vendor-specific object types are preserved as `Demo3DUnknownObject` until explicit classes are added.
+- RAW3D `Model.xml` scene metadata and external geometry/texture resources.
+- RAW3D Three.js rendering with source geometry shared across scene nodes.

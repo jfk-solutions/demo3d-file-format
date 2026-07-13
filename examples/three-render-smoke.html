@@ -56,19 +56,20 @@
   </head>
   <body>
     <header>
-      <input id="demo3d-file" type="file" accept=".demo3d" />
+      <input id="demo3d-file" type="file" accept=".demo3d,.raw3d" />
       <button id="fit-main" type="button" disabled>Fit main</button>
       <button id="fit-all" type="button" disabled>Fit all</button>
-      <output id="status">Choose a .demo3d file.</output>
+      <output id="status">Choose a .demo3d or .raw3d file.</output>
     </header>
     <canvas id="viewport"></canvas>
 
     <script type="module">
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-      import { parseDemo3D } from "../dist/index.js";
+      import { parseDemo3D, parseRaw3D } from "../dist/index.js";
       import {
         createDemo3DThreeGroup,
-        createDemo3DThreeRenderer
+        createDemo3DThreeRenderer,
+        createRaw3DThreeGroup
       } from "../dist/three/index.js";
 
       const input = document.querySelector("#demo3d-file");
@@ -94,7 +95,9 @@
         status.value = "Parsing...";
 
         try {
-          const parsed = await parseDemo3D(await file.arrayBuffer());
+          const isRaw3D = file.name.toLowerCase().endsWith(".raw3d");
+          const bytes = await file.arrayBuffer();
+          const parsed = isRaw3D ? await parseRaw3D(bytes) : await parseDemo3D(bytes);
           status.value = "Selecting renderer...";
           disposeCurrentRender();
           const selected = await createDemo3DThreeRenderer({
@@ -107,19 +110,21 @@
           const THREE = selected.three;
 
           status.value = "Creating Three objects...";
-          const group = await createDemo3DThreeGroup(parsed, {
-            three: THREE,
-            renderProceduralBelts: true,
-            renderProceduralRacks: true,
-            renderProceduralSupportStands: true,
-            renderProceduralConveyorSides: true,
-            renderProceduralPhotoEyes: true,
-            renderProceduralRollers: true,
-            renderProceduralMotors: false,
-            renderDimensions: true,
-            showPlaceholders: false,
-            includeUnsupported: true
-          });
+          const group = isRaw3D
+            ? await createRaw3DThreeGroup(parsed, { three: THREE })
+            : await createDemo3DThreeGroup(parsed, {
+                three: THREE,
+                renderProceduralBelts: true,
+                renderProceduralRacks: true,
+                renderProceduralSupportStands: true,
+                renderProceduralConveyorSides: true,
+                renderProceduralPhotoEyes: true,
+                renderProceduralRollers: true,
+                renderProceduralMotors: false,
+                renderDimensions: true,
+                showPlaceholders: false,
+                includeUnsupported: true
+              });
 
           status.value = "Rendering...";
           const scene = new THREE.Scene();
@@ -160,15 +165,18 @@
             stats,
             warnings: group.userData.demo3d.warnings.length
           };
-          status.value =
-            `Rendered with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
-            `(${stats.serializedRenderables} placed renderables, ` +
-            `${stats.proceduralBelts} belts, ${stats.proceduralRacks} racks, ` +
-            `${stats.proceduralSupportStands} support stands, ` +
-            `${stats.proceduralConveyorSides} side profiles, ${stats.proceduralPhotoEyes} photo eyes, ` +
-            `${stats.proceduralRollers} fallback rollers, ${stats.proceduralMotors} motors, ` +
-            `${stats.dimensions} dimensions, ` +
-            `${stats.materials} materials, ${stats.textures} textures).`;
+          status.value = isRaw3D
+            ? `Rendered RAW3D with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ` +
+              `${stats.meshes} mesh instances from ${stats.geometries} geometries, ` +
+              `${stats.nodes} nodes, ${stats.materials} materials, ${stats.textures} textures.`
+            : `Rendered with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
+              `(${stats.serializedRenderables} placed renderables, ` +
+              `${stats.proceduralBelts} belts, ${stats.proceduralRacks} racks, ` +
+              `${stats.proceduralSupportStands} support stands, ` +
+              `${stats.proceduralConveyorSides} side profiles, ${stats.proceduralPhotoEyes} photo eyes, ` +
+              `${stats.proceduralRollers} fallback rollers, ${stats.proceduralMotors} motors, ` +
+              `${stats.dimensions} dimensions, ` +
+              `${stats.materials} materials, ${stats.textures} textures).`;
         } catch (error) {
           window.__demo3dRenderResult = {
             status: "error",
@@ -193,7 +201,10 @@
           }
 
           const transfer = new DataTransfer();
-          transfer.items.add(new File([await response.blob()], "sample.demo3d"));
+          const extension = new URL(url, window.location.href).pathname.toLowerCase().endsWith(".raw3d")
+            ? ".raw3d"
+            : ".demo3d";
+          transfer.items.add(new File([await response.blob()], `sample${extension}`));
           input.files = transfer.files;
           input.dispatchEvent(new Event("change"));
         } catch (error) {

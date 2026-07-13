@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseDemo3D } from "../src/index.js";
+import { parseDemo3D, parseRaw3D } from "../src/index.js";
 import { parseXml } from "./helpers.js";
 
 const benchmarkPath = "C:/Program Files (x86)/Emulate3D 2025/Benchmark/Graphics.demo3d";
 const suppliedPath = "D:/5801704_DE40_Kardex_Bauhaus_REV07neu3.demo3d";
+const rawSimplePath = "D:/Simple.raw3d";
+const rawSuppliedPath = "D:/5801704_DE40_Kardex_Bauhaus_REV07neu3.raw3d";
 
 describe("installed Demo3D files", () => {
   it.skipIf(!existsSync(benchmarkPath))("parses the installed Graphics benchmark project", async () => {
@@ -27,5 +29,25 @@ describe("installed Demo3D files", () => {
     expect(parsed.model.meshes.length).toBeGreaterThan(0);
     expect(parsed.model.typedObjects.length).toBeGreaterThan(0);
     expect(parsed.model.unknownTypes.size).toBeGreaterThan(0);
+  });
+
+  it.skipIf(!existsSync(rawSimplePath))("parses the supplied simple RAW3D scene", async () => {
+    const parsed = await parseRaw3D(readFileSync(rawSimplePath));
+
+    expect(parsed.modelEntryName).toBe("Model.xml");
+    expect(parsed.thumbnail).toBeDefined();
+    expect(parsed.model.nodes.length).toBeGreaterThan(0);
+    expect(parsed.model.meshes.length).toBeGreaterThan(0);
+    expect(parsed.model.vertexBuffers.every((buffer) => buffer.data)).toBe(true);
+    expect(parsed.model.indexBuffers.every((buffer) => buffer.data)).toBe(true);
+  });
+
+  it.skipIf(!existsSync(rawSuppliedPath))("parses the supplied large RAW3D scene", async () => {
+    const parsed = await parseRaw3D(readFileSync(rawSuppliedPath));
+
+    expect(parsed.model.nodes.length).toBeGreaterThan(20_000);
+    expect(parsed.model.meshes.length).toBeGreaterThan(3_000);
+    expect(parsed.model.vertexBuffers.every((buffer) => buffer.data)).toBe(true);
+    expect(parsed.model.indexBuffers.every((buffer) => buffer.data)).toBe(true);
   });
 });

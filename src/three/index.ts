@@ -17,6 +17,17 @@ import {
 import { Demo3DBinaryBlock, Demo3DXmlElement } from "../xml.js";
 
 export {
+  createRaw3DThreeGroup,
+  createRaw3DThreeScene,
+  decodeRaw3DThreeGeometry,
+  type Raw3DThreeModule,
+  type Raw3DThreeOptions,
+  type Raw3DThreeScene,
+  type Raw3DThreeStats,
+  type Raw3DThreeWarning
+} from "./raw3d.js";
+
+export {
   createDemo3DThreeRenderer,
   type Demo3DThreeCanvasRendererOptions,
   type Demo3DThreeModule,
@@ -2283,6 +2294,7 @@ function getDirectVisualGeometry(visual: Demo3DVisual, state: RendererState): Th
     properties.textOf("Length") ?? "",
     properties.textOf("Radius") ?? "",
     properties.textOf("StartAngle") ?? "",
+    properties.textOf("Thickness") ?? "",
     properties.textOf("Width") ?? ""
   ].join("|")}`;
   const cached = state.primitiveGeometryCache.get(key);
@@ -2291,11 +2303,19 @@ function getDirectVisualGeometry(visual: Demo3DVisual, state: RendererState): Th
   }
 
   let geometry: Three.BufferGeometry | undefined;
-  if (visual.typeName === "e3d:BoxVisual" || visual.typeName === "e3d:BoxTubeVisual") {
+  if (visual.typeName === "e3d:BoxVisual") {
     geometry = new state.three.BoxGeometry(
       numberChild(properties, "Width", 1),
       numberChild(properties, "Height", 1),
       numberChild(properties, "Depth", 1)
+    );
+  } else if (visual.typeName === "e3d:BoxTubeVisual") {
+    geometry = createBoxTubeGeometry(
+      numberChild(properties, "Width", 0.25),
+      numberChild(properties, "Height", 1),
+      numberChild(properties, "Depth", 0.25),
+      numberChild(properties, "Thickness", 0.015),
+      state
     );
   } else if (visual.typeName === "e3d:CylinderVisual") {
     geometry = new state.three.CylinderGeometry(
@@ -2326,6 +2346,46 @@ function getDirectVisualGeometry(visual: Demo3DVisual, state: RendererState): Th
   geometry.computeBoundingSphere();
   state.primitiveGeometryCache.set(key, geometry);
   state.stats.geometries += 1;
+  return geometry;
+}
+
+function createBoxTubeGeometry(
+  width: number,
+  height: number,
+  depth: number,
+  thickness: number,
+  state: RendererState
+): Three.BufferGeometry {
+  const halfWidth = Math.max(width, 0) / 2;
+  const halfDepth = Math.max(depth, 0) / 2;
+  const edge = clamp(thickness, 0, Math.min(halfWidth, halfDepth));
+  const shape = new state.three.Shape();
+  shape.moveTo(-halfWidth, -halfDepth);
+  shape.lineTo(-halfWidth, halfDepth);
+  shape.lineTo(halfWidth, halfDepth);
+  shape.lineTo(halfWidth, -halfDepth);
+  shape.closePath();
+
+  const innerHalfWidth = halfWidth - edge;
+  const innerHalfDepth = halfDepth - edge;
+  if (innerHalfWidth > 0 && innerHalfDepth > 0) {
+    const hole = new state.three.Path();
+    hole.moveTo(-innerHalfWidth, -innerHalfDepth);
+    hole.lineTo(innerHalfWidth, -innerHalfDepth);
+    hole.lineTo(innerHalfWidth, innerHalfDepth);
+    hole.lineTo(-innerHalfWidth, innerHalfDepth);
+    hole.closePath();
+    shape.holes.push(hole);
+  }
+
+  const geometry = new state.three.ExtrudeGeometry(shape, {
+    depth: Math.max(height, 0),
+    steps: 1,
+    bevelEnabled: false
+  });
+  // ExtrudeGeometry uses Z for its extrusion. Demo3D box tubes extrude along Y.
+  geometry.rotateX(-Math.PI / 2);
+  geometry.translate(0, -Math.max(height, 0) / 2, 0);
   return geometry;
 }
 
@@ -3457,7 +3517,9 @@ function applyDemo3DTransform(object: Three.Object3D, transformText: string | un
   }
 
   object.position.set(values[0] ?? 0, values[1] ?? 0, -(values[2] ?? 0));
-  object.rotation.set(-(values[3] ?? 0), -(values[4] ?? 0), values[5] ?? 0);
+  // Demo3D rotation triples are pitch (X), yaw (Y), and roll (Z). Its
+  // RotationYawPitchRoll matrix corresponds to Three's intrinsic YXZ order.
+  object.rotation.set(-(values[3] ?? 0), -(values[4] ?? 0), values[5] ?? 0, "YXZ");
 }
 
 function convertTriangleGeometryToThreeCoordinates(geometry: Three.BufferGeometry): void {

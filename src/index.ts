@@ -35,3 +35,18 @@ export { parseDemo3DXmlFast } from "./fast-xml.js";
 export { ZipArchive, ZipEntry, parseZip, normalizeZipPath, type ZipEntryInfo } from "./zip.js";
 export { Demo3DError, Demo3DUnsupportedError, Demo3DXmlError, Demo3DZipError } from "./errors.js";
 export type { Demo3DInput } from "./binary.js";
+export {
+  parseRaw3D,
+  Raw3DPackage,
+  Raw3DProject,
+  Raw3DView,
+  Raw3DNode,
+  Raw3DLayer,
+  Raw3DMaterial,
+  Raw3DTexture,
+  Raw3DMesh,
+  Raw3DVertexBuffer,
+  Raw3DVertexAttribute,
+  Raw3DIndexBuffer,
+  type ParseRaw3DOptions
+} from "./raw3d.js";
