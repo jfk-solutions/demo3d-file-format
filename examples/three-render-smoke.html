@@ -62,6 +62,45 @@
         cursor: pointer;
       }
 
+      #layers-panel {
+        position: absolute;
+        inset-block-start: 1rem;
+        inset-inline-end: 1rem;
+        z-index: 1;
+        inline-size: min(18rem, calc(100% - 2rem));
+        max-block-size: min(55vh, 30rem);
+        overflow: auto;
+        border: 1px solid #71848d;
+        border-radius: 4px;
+        background: rgb(31 52 62 / 94%);
+        color: #e8eef1;
+      }
+
+      #layers-panel summary {
+        cursor: pointer;
+        padding: 0.45rem 0.65rem;
+        font-weight: 650;
+      }
+
+      #layers-list {
+        display: grid;
+        gap: 0.3rem;
+        padding: 0 0.65rem 0.65rem;
+      }
+
+      .layer-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-inline-size: 0;
+      }
+
+      .layer-toggle span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       body.embedded #demo3d-file {
         display: none;
       }
@@ -182,6 +221,10 @@
     </header>
     <main id="viewport-shell">
       <canvas id="viewport"></canvas>
+      <details id="layers-panel" open hidden>
+        <summary>Layers</summary>
+        <div id="layers-list"></div>
+      </details>
       <div id="view-cube" class="view-cube" aria-label="Coordinate cube: click a face or drag to rotate" hidden>
         <div id="view-cube-rotator" class="view-cube-rotator">
           <button class="view-cube-face" data-view="right" type="button" title="View from +X">+X</button>
@@ -211,6 +254,8 @@
       const sideView = document.querySelector("#side-view");
       const savedView = document.querySelector("#saved-view");
       const enhancedRender = document.querySelector("#enhanced-render");
+      const layersPanel = document.querySelector("#layers-panel");
+      const layersList = document.querySelector("#layers-list");
       const status = document.querySelector("#status");
       const canvas = document.querySelector("#viewport");
       const viewCube = document.querySelector("#view-cube");
@@ -273,8 +318,14 @@
                 renderProceduralMotors: false,
                 renderDimensions: true,
                 showPlaceholders: false,
+                // Build every layer so the layer panel can make hidden project
+                // layers visible later without reloading the file.
+                includeHiddenLayers: true,
                 includeUnsupported: true
               });
+
+          const layerState = createLayerState(parsed.model.layers, isRaw3D);
+          applyLayerVisibility(group, layerState);
 
           status.value = "Rendering...";
           const scene = new THREE.Scene();
@@ -313,7 +364,8 @@
             renderer,
             scene,
             three: THREE,
-            views
+            views,
+            layerState
           };
           fitMain.disabled = false;
           fitAll.disabled = false;
@@ -322,6 +374,7 @@
           viewCube.hidden = false;
           updateViewCube();
           populateSavedViews(views, defaultView);
+          populateLayers(layerState);
           if (defaultView && views.some((view) => view.name === defaultView)) {
             savedView.value = defaultView;
             applySavedView(defaultView);
@@ -429,6 +482,61 @@
           bytes[index] = binary.charCodeAt(index);
         }
         return bytes.buffer;
+      }
+
+      function createLayerState(layers, isRaw3D) {
+        return {
+          isRaw3D,
+          visibility: new Map(layers.map((layer, index) => [
+            isRaw3D ? index : layer.name,
+            isRaw3D ? true : layer.visible
+          ])),
+          layers: layers.map((layer, index) => ({
+            key: isRaw3D ? index : layer.name,
+            name: layer.name || `Layer ${index + 1}`
+          }))
+        };
+      }
+
+      function populateLayers(layerState) {
+        layersList.replaceChildren();
+        layersPanel.hidden = layerState.layers.length === 0;
+        for (const layer of layerState.layers) {
+          const label = document.createElement("label");
+          label.className = "layer-toggle";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = layerState.visibility.get(layer.key) !== false;
+          checkbox.addEventListener("change", () => {
+            layerState.visibility.set(layer.key, checkbox.checked);
+            applyLayerVisibility(currentRender.group, layerState);
+            currentRender.renderer.render(currentRender.scene, currentRender.camera);
+          });
+          const name = document.createElement("span");
+          name.textContent = layer.name;
+          label.append(checkbox, name);
+          layersList.append(label);
+        }
+      }
+
+      function applyLayerVisibility(group, layerState) {
+        const visit = (object, demoLayer, rawLayer) => {
+          const demoData = object.userData.demo3d;
+          const rawData = object.userData.raw3d;
+          const nextDemoLayer = demoData?.kind === "visual" && demoData.layer !== undefined
+            ? demoData.layer
+            : demoLayer;
+          const nextRawLayer = rawData?.kind === "node" && rawData.layerIndex !== undefined
+            ? rawData.layerIndex
+            : rawLayer;
+          if (object.isMesh || object.isLine || object.isPoints || object.isSprite) {
+            const demoVisible = nextDemoLayer === undefined || layerState.visibility.get(nextDemoLayer) !== false;
+            const rawVisible = nextRawLayer === undefined || layerState.visibility.get(nextRawLayer) !== false;
+            object.visible = demoVisible && rawVisible;
+          }
+          for (const child of object.children) visit(child, nextDemoLayer, nextRawLayer);
+        };
+        visit(group, undefined, undefined);
       }
 
       function fitCurrentScene(mode) {

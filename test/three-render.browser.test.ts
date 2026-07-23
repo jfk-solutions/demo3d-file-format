@@ -70,6 +70,25 @@ test("switches an already rendered scene to the enhanced mode", async ({ page })
   expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
 });
 
+test("shows Demo3D layers and lets the viewer toggle them", async ({ page }) => {
+  const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
+  await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
+  await page.locator("#demo3d-file").setInputFiles({
+    name: "fixture.demo3d",
+    mimeType: "application/zip",
+    buffer: Buffer.from(fixture)
+  });
+
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  await expect(page.locator("#layers-panel")).toBeVisible();
+  await expect(page.locator("#layers-list .layer-toggle")).toHaveCount(2);
+  await expect(page.locator("#layers-list .layer-toggle").filter({ hasText: "Main" }).locator("input")).toBeChecked();
+  await expect(page.locator("#layers-list .layer-toggle").filter({ hasText: "Hidden" }).locator("input")).not.toBeChecked();
+
+  await page.locator("#layers-list .layer-toggle").filter({ hasText: "Main" }).locator("input").uncheck();
+  await expect(page.locator("#layers-list .layer-toggle").filter({ hasText: "Main" }).locator("input")).not.toBeChecked();
+});
+
 test("switches the camera to top and side views", async ({ page }) => {
   const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
   await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
