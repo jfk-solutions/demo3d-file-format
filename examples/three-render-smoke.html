@@ -74,6 +74,14 @@
     </style>
   </head>
   <body>
+    <!-- The export page replaces this marker with JSON containing a file name and Base64 data. -->
+    <script id="demo3d-embedded-model" type="application/json">__DEMO3D_EMBEDDED_MODEL__</script>
+    <script>
+      // Set this before the header is parsed so an embedded viewer never flashes a file picker.
+      if (document.querySelector("#demo3d-embedded-model")?.textContent?.trim() !== "__DEMO3D_EMBEDDED_MODEL__") {
+        document.body.classList.add("embedded");
+      }
+    </script>
     <header>
       <input id="demo3d-file" type="file" accept=".demo3d,.raw3d" />
       <button id="fit-main" type="button" disabled>Fit main</button>
@@ -88,8 +96,6 @@
       <output id="status">Choose a .demo3d or .raw3d file.</output>
     </header>
     <canvas id="viewport"></canvas>
-    <!-- The export page replaces this marker with JSON containing a file name and Base64 data. -->
-    <script id="demo3d-embedded-model" type="application/json">__DEMO3D_EMBEDDED_MODEL__</script>
 
     <script type="module">
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -247,7 +253,6 @@
 
       const embeddedModel = readEmbeddedModel();
       if (embeddedModel) {
-        document.body.classList.add("embedded");
         renderFile({
           name: embeddedModel.name,
           arrayBuffer: async () => base64ToArrayBuffer(embeddedModel.data)
