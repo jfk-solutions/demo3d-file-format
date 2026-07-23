@@ -144,12 +144,17 @@ export async function createRaw3DThreeGroup(
         }
         if (geometry) {
           const nodeMaterials = resolveNodeMaterials(node, sourceMesh, project, materials, defaultMaterial);
-          const mesh = new three.Mesh(geometry, nodeMaterials.length === 1 ? nodeMaterials[0] : nodeMaterials);
-          mesh.name = `${node.name} Mesh`;
-          mesh.castShadow = node.castsShadow;
-          mesh.receiveShadow = true;
-          mesh.userData.raw3d = { kind: "mesh", nodeIndex: node.index, meshIndex: node.meshIndex };
-          object.add(mesh);
+          const drawable = createDrawable(sourceMesh, geometry, nodeMaterials, three);
+          drawable.name = `${node.name} ${sourceMesh.meshType}`;
+          drawable.castShadow = node.castsShadow && drawable instanceof three.Mesh;
+          drawable.receiveShadow = drawable instanceof three.Mesh;
+          drawable.userData.raw3d = {
+            kind: primitiveKind(sourceMesh.meshType),
+            nodeIndex: node.index,
+            meshIndex: node.meshIndex,
+            meshType: sourceMesh.meshType
+          };
+          object.add(drawable);
           stats.meshes += 1;
         }
       }
@@ -298,10 +303,12 @@ export function decodeRaw3DThreeGeometry(
         ? indexView.getUint32(offset * 4, true)
         : indexView.getUint16(offset * 2, true);
     }
-    for (let offset = 0; offset + 2 < indices.length; offset += 3) {
-      const second = indices[offset + 1]!;
-      indices[offset + 1] = indices[offset + 2]!;
-      indices[offset + 2] = second;
+    if (isTriangleList(mesh.meshType)) {
+      for (let offset = 0; offset + 2 < indices.length; offset += 3) {
+        const second = indices[offset + 1]!;
+        indices[offset + 1] = indices[offset + 2]!;
+        indices[offset + 2] = second;
+      }
     }
     indexArrays.push(indices);
     totalIndexCount += indices.length;
@@ -318,12 +325,67 @@ export function decodeRaw3DThreeGeometry(
     }
     geometry.setIndex(new three.BufferAttribute(combined, 1));
   }
-  if (!geometry.getAttribute("normal")) {
+  if (isTriangleList(mesh.meshType) && !geometry.getAttribute("normal")) {
     geometry.computeVertexNormals();
   }
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
+}
+
+function createDrawable(
+  mesh: Raw3DMesh,
+  geometry: Three.BufferGeometry,
+  materials: readonly Three.Material[],
+  three: Raw3DThreeModule
+): Three.Object3D {
+  const material = materials[0] ?? new three.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.8 });
+  switch (mesh.meshType.toLowerCase()) {
+    case "linelist": {
+      const lineMaterials = materials.map((source) => toLineMaterial(source, three));
+      return new three.LineSegments(geometry, lineMaterials.length === 1 ? lineMaterials[0]! : lineMaterials);
+    }
+    case "pointlist": {
+      const pointMaterials = materials.map((source) => toPointMaterial(source, three));
+      return new three.Points(geometry, pointMaterials.length === 1 ? pointMaterials[0]! : pointMaterials);
+    }
+    default:
+      return new three.Mesh(geometry, materials.length === 1 ? material : [...materials]);
+  }
+}
+
+function toLineMaterial(material: Three.Material, three: Raw3DThreeModule): Three.LineBasicMaterial {
+  const source = material as Three.MeshStandardMaterial;
+  return new three.LineBasicMaterial({
+    color: source.color,
+    opacity: source.opacity,
+    transparent: source.transparent,
+    depthWrite: source.depthWrite
+  });
+}
+
+function toPointMaterial(material: Three.Material, three: Raw3DThreeModule): Three.PointsMaterial {
+  const source = material as Three.MeshStandardMaterial;
+  return new three.PointsMaterial({
+    color: source.color,
+    opacity: source.opacity,
+    transparent: source.transparent,
+    depthWrite: source.depthWrite,
+    size: 1,
+    sizeAttenuation: true
+  });
+}
+
+function isTriangleList(meshType: string): boolean {
+  return meshType.toLowerCase() === "trianglelist";
+}
+
+function primitiveKind(meshType: string): "mesh" | "lines" | "points" {
+  switch (meshType.toLowerCase()) {
+    case "linelist": return "lines";
+    case "pointlist": return "points";
+    default: return "mesh";
+  }
 }
 
 function resolveNodeMaterials(

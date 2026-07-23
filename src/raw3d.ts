@@ -127,6 +127,8 @@ export class Raw3DMesh {
   constructor(
     public readonly vertexBufferIndex: number,
     public readonly indexBufferIndices: readonly number[],
+    /** The primitive topology. Omitted by RAW3D means TriangleList. */
+    public readonly meshType: string,
     public readonly xml: Demo3DXmlElement
   ) {}
 }
@@ -285,6 +287,7 @@ async function extractRaw3DProject(
     (root.child("Meshes")?.childrenNamed("Mesh") ?? []).map((element) => new Raw3DMesh(
       integerAttribute(element, "VertexBuffer") ?? -1,
       integerList(attribute(element, "IndexBuffers")),
+      attribute(element, "MeshType") ?? "TriangleList",
       element
     )),
     vertexBufferElements.map((element, index) => {

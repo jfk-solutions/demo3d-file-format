@@ -33,6 +33,7 @@ describe("RAW3D support", () => {
       transparency: 0.2
     });
     expect(parsed.model.meshes[0]).toMatchObject({ vertexBufferIndex: 0, indexBufferIndices: [0] });
+    expect(parsed.model.meshes[0]?.meshType).toBe("TriangleList");
     expect(parsed.model.vertexBuffers[0]).toMatchObject({ stride: 32 });
     expect(parsed.model.vertexBuffers[1]).toMatchObject({ stride: 4 });
     expect(parsed.model.vertexBuffers[0]?.data).toHaveLength(96);
@@ -117,7 +118,31 @@ describe("RAW3D support", () => {
     expect(parsed.model.indexBuffers[0]?.data).toHaveLength(12);
     expect([...geometry.getIndex()!.array]).toEqual([0, 2, 1]);
   });
+
+  it("renders LineList and PointList primitives without treating them as triangles", async () => {
+    const parsed = await parseRaw3D(raw3dPrimitiveFixture());
+    const lineGeometry = decodeRaw3DThreeGeometry(parsed.model.meshes[0]!, parsed.model, three);
+    expect([...lineGeometry.getIndex()!.array]).toEqual([0, 1]);
+
+    const group = await createRaw3DThreeGroup(parsed, { three });
+    const drawables: three.Object3D[] = [];
+    group.traverse((object) => {
+      if (object instanceof three.LineSegments || object instanceof three.Points) drawables.push(object);
+    });
+    expect(drawables).toHaveLength(2);
+    expect(drawables[0]).toBeInstanceOf(three.LineSegments);
+    expect(drawables[1]).toBeInstanceOf(three.Points);
+  });
 });
+
+function raw3dPrimitiveFixture(): Uint8Array {
+  const model = `<Scene><Nodes><Node Index="0" Name="Line" Mesh="0" Materials="0" /><Node Index="1" Name="Points" Mesh="1" Materials="0" /></Nodes><Materials><Material R="1" G="0" B="0" /></Materials><Meshes><Mesh MeshType="LineList" VertexBuffer="0" IndexBuffers="0" /><Mesh MeshType="PointList" VertexBuffer="0" IndexBuffers="0" /></Meshes><VertexBuffers><VertexBuffer Path="v0.dat"><Attribute Usage="Position" /></VertexBuffer></VertexBuffers><IndexBuffers><IndexBuffer Path="i0.dat" /></IndexBuffers></Scene>`;
+  return createZip([
+    { name: "Model.xml", data: model },
+    { name: "v0.dat", data: floatBytes([0, 0, 0, 1, 0, 0]) },
+    { name: "i0.dat", data: uint16Bytes([0, 1]) }
+  ]);
+}
 
 function raw3dFixture(textured = false, int32Indices = false): Uint8Array {
   const model = `<?xml version="1.0" encoding="utf-8"?>
