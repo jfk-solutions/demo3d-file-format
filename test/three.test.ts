@@ -9,6 +9,7 @@ import {
 import {
   annularCylinderXmlFixture,
   createZip,
+  demo3d2026Fixture,
   demo3dXmlFixture,
   generatedObjectsXmlFixture,
   parseXml,
@@ -19,6 +20,20 @@ import {
 describe("Three renderer adapter", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("renders Demo3D 2026 external mesh-cache geometry", async () => {
+    const parsed = await parseDemo3D(demo3d2026Fixture());
+    const group = await createDemo3DThreeGroup(parsed, { three });
+
+    expect(group.userData.demo3d.stats).toMatchObject({
+      meshes: 1,
+      geometries: 1,
+      serializedRenderables: 1,
+      missingGeometryPlaceholders: 0
+    });
+    const bounds = new three.Box3().setFromObject(group);
+    expect(bounds.isEmpty()).toBe(false);
   });
 
   it("converts parsed Demo3D meshes into Three geometry", async () => {

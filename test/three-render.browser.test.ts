@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test, expect } from "@playwright/test";
+import { createZip, demo3d2026Fixture, demo3dXmlFixture } from "./helpers.js";
 
 const samplePath = "D:/5801704_DE40_Kardex_Bauhaus_REV07neu3.demo3d";
 const root = resolve(".");
@@ -45,9 +47,81 @@ test.afterAll(async () => {
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 });
 
-test.skip(!existsSync(samplePath), `Sample file does not exist: ${samplePath}`);
+test("switches an already rendered scene to the enhanced mode", async ({ page }) => {
+  const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
+  await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
+  await page.locator("#demo3d-file").setInputFiles({
+    name: "fixture.demo3d",
+    mimeType: "application/zip",
+    buffer: Buffer.from(fixture)
+  });
+
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.renderMode)).toBe("standard");
+  await expect(page.locator("#saved-view")).toHaveValue("Overview");
+  await expect(page.locator("#saved-view option")).toHaveCount(2);
+
+  await page.locator("#enhanced-render").check();
+
+  await expect.poll(async () => page.evaluate(() => window.__demo3dRenderResult?.renderMode)).toBe("enhanced");
+  expect(await page.locator("#enhanced-render").getAttribute("role")).toBe("switch");
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.enhancedGround)).toBe(true);
+  await expect(page.locator("#status")).toContainText("enhanced mode");
+  expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
+});
+
+test("runs the compiled standalone page directly from the file system", async ({ page }) => {
+  const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
+  const standalonePath = join(root, "dist/examples/three-render-smoke-standalone.html");
+  await page.goto(pathToFileURL(standalonePath).href);
+  await page.locator("#demo3d-file").setInputFiles({
+    name: "fixture.demo3d",
+    mimeType: "application/zip",
+    buffer: Buffer.from(fixture)
+  });
+
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.stats.meshes)).toBeGreaterThan(0);
+  await page.locator("#enhanced-render").check();
+  await expect.poll(async () => page.evaluate(() => window.__demo3dRenderResult?.renderMode)).toBe("enhanced");
+  expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
+});
+
+test("renders a Demo3D 2026 external mesh cache in the standalone page", async ({ page }) => {
+  const standalonePath = join(root, "dist/examples/three-render-smoke-standalone.html");
+  await page.goto(pathToFileURL(standalonePath).href);
+  await page.locator("#demo3d-file").setInputFiles({
+    name: "fixture-2026.demo3d",
+    mimeType: "application/zip",
+    buffer: Buffer.from(demo3d2026Fixture())
+  });
+
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.stats)).toMatchObject({
+    meshes: 1,
+    geometries: 1,
+    serializedRenderables: 1,
+    missingGeometryPlaceholders: 0
+  });
+  expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
+});
+
+test("renders a model embedded in the standalone viewer without a file picker", async ({ page }) => {
+  const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
+  const standalonePath = join(root, "dist/examples/three-render-smoke-standalone.html");
+  const template = await import("node:fs/promises").then((fs) => fs.readFile(standalonePath, "utf8"));
+  const embedded = JSON.stringify({ name: "embedded.demo3d", data: Buffer.from(fixture).toString("base64") });
+
+  await page.setContent(template.replace("__DEMO3D_EMBEDDED_MODEL__", embedded));
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+
+  await expect(page.locator("#demo3d-file")).toBeHidden();
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.stats.meshes)).toBeGreaterThan(0);
+  expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
+});
 
 test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ page }) => {
+  test.skip(!existsSync(samplePath), `Sample file does not exist: ${samplePath}`);
   await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
   await page.locator("#demo3d-file").setInputFiles(samplePath);
 
@@ -74,6 +148,7 @@ test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ p
   expect(result.stats.imageVisuals).toBeGreaterThan(0);
   expect(result.stats.lights).toBeGreaterThan(0);
   expect(result.stats.missingGeometryPlaceholders).toBe(0);
+  expect(result.renderMode).toBe("standard");
 
   const screenshot = await page.locator("#viewport").screenshot();
   expect(screenshot.byteLength).toBeGreaterThan(1_000);
@@ -132,7 +207,9 @@ declare global {
     __demo3dRenderResult?: {
       status: string;
       backend?: "webgpu" | "webgl";
+      enhancedGround?: boolean;
       fallback?: string;
+      renderMode?: "standard" | "enhanced";
       stats: {
         meshes: number;
         geometries: number;

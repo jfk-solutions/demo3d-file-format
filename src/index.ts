@@ -3,6 +3,7 @@ export {
   Demo3DPackage,
   Demo3DProject,
   Demo3DHeader,
+  Demo3DView,
   Demo3DLayer,
   Demo3DVector2,
   Demo3DExtrusionPolygon,
@@ -24,7 +25,8 @@ export {
   Demo3DTypedObject,
   Demo3DUnknownObject,
   registerDemo3DType,
-  type Demo3DTypeConstructor
+  type Demo3DTypeConstructor,
+  type Demo3DExternalMeshData
 } from "./model.js";
 export {
   Demo3DBinaryBlock,

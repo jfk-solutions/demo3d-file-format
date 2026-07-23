@@ -21,8 +21,11 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:library && node scripts/build-standalone-demo.mjs",
+    "build:library": "tsc -p tsconfig.json",
+    "build:test-page": "npm run build:library && node scripts/build-standalone-demo.mjs",
     "demo:three": "npm run build && node scripts/serve-demo.mjs examples/three-render-smoke.html",
+    "demo:export": "npm run build && node scripts/serve-demo.mjs dist/examples/export-embedded-viewer-standalone.html",
     "test": "vitest run",
     "test:browser": "npm run build && playwright test",
     "test:watch": "vitest"
@@ -49,6 +52,7 @@
     "@types/node": "^26.1.1",
     "@types/three": "^0.185.1",
     "@xmldom/xmldom": "^0.9.10",
+    "esbuild": "^0.28.1",
     "three": "^0.185.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

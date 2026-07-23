@@ -3,7 +3,12 @@
 Browser-first TypeScript parser and Three.js adapter for Demo3D/Emulate3D
 `.demo3d` project files and render-ready `.raw3d` scene files.
 
-The parser accepts an `ArrayBuffer`, `Uint8Array`, or `DataView`, reads the outer ZIP package, extracts the nested XML model document, and returns a lossless object structure with typed helpers for the pieces most useful to rendering adapters.
+The parser accepts an `ArrayBuffer`, `Uint8Array`, or `DataView`, reads the outer
+ZIP package, extracts either the traditional nested XML model document or the
+Demo3D 2026 `Model.xml`, and returns a lossless object structure with typed
+helpers for the pieces most useful to rendering adapters. Demo3D 2026 external
+geometry caches (`meshes/map.xml` with `v*.dat`, `i*.dat`, and `s*.dat`
+buffers) are decoded automatically.
 
 ## Install
 
@@ -24,6 +29,12 @@ console.log(parsed.model.header.product);
 console.log(parsed.model.meshes.length);
 console.log(parsed.model.visuals.length);
 ```
+
+Saved project views are available through `parsed.model.views`; the name stored
+in `parsed.model.defaultView` identifies the project's default view. Each view
+contains its Demo3D `position` and `target` vectors. The included Three.js
+viewer exposes these from its **Saved views** menu and opens the default view
+automatically. RAW3D saved views are exposed as `parsed.model.views` as well.
 
 RAW3D scenes use a separate, strongly typed API because their `Model.xml`, flat
 node hierarchy, and external vertex/index buffers differ from the editable
@@ -65,6 +76,34 @@ npm run demo:three
 ```
 
 Then open the printed `http://127.0.0.1:.../examples/three-render-smoke.html` URL and choose a `.demo3d` or `.raw3d` file.
+
+To create a single-file version that can be opened directly from the file
+system without a server, run:
+
+```bash
+npm run build:test-page
+```
+
+Open `dist/examples/three-render-smoke-standalone.html`. Three.js,
+OrbitControls, and the Demo3D parser/renderer are bundled into that HTML file;
+only the `.demo3d` or `.raw3d` file selected by the user remains external. The
+normal `npm run build` command also generates this standalone page.
+
+### Export an Embedded Viewer
+
+To create a standalone HTML viewer with one model embedded inside it, run:
+
+```bash
+npm run demo:export
+```
+
+Open the printed URL, choose either a `.demo3d` or `.raw3d` file, and select
+**Download viewer HTML**. The downloaded `<model>-viewer.html` contains the
+viewer, Three.js, parser, and model data. It can be opened directly with
+`file://` and presents the model immediately without a file-open control. The
+exporter itself is also available as
+`dist/examples/export-embedded-viewer-standalone.html` and can be opened
+directly from the file system.
 
 The parser root remains independent of Three.js. Renderer features that require
 procedural reconstruction are opt-in through the `demo3d-file-format/three`
@@ -160,6 +199,31 @@ lights come from the same Three.js module as the renderer. Set
 WebGPU can improve repeated rendering of complex scenes, but it does not speed
 up archive/XML parsing and may have higher first-frame shader compilation cost.
 
+### Enhanced Render Mode
+
+For a more presentation-ready view, apply the optional enhanced preset after
+adding the parsed group to a scene. It enables soft shadows, marks opaque model
+meshes as shadow casters/receivers, adds fitted key and fill lighting, and puts
+a matte contact floor below the model:
+
+```ts
+import { applyDemo3DThreeRenderMode } from "demo3d-file-format/three";
+
+const presentation = applyDemo3DThreeRenderMode({
+  three: selected.three,
+  renderer: selected.renderer,
+  scene,
+  object: group,
+  mode: "enhanced"
+});
+
+// Remove the preset and restore the previous renderer and mesh settings.
+presentation.dispose();
+```
+
+Use `mode: "standard"` for the lighter-weight lighting preset. The browser
+smoke-test page includes a **Better render** switch for comparing both modes.
+
 ## Current Scope
 
 - Read-only parser.
@@ -167,6 +231,7 @@ up archive/XML parsing and may have higher first-frame shader compilation cost.
 - Stored and DEFLATE ZIP entries.
 - Full XML tree preservation.
 - Core typed classes for project header, visuals, meshes, materials, resources, and unknown typed entries.
+- Demo3D 2026 `Model.xml`, flat visual hierarchies, and external mesh caches.
 - Vendor-specific object types are preserved as `Demo3DUnknownObject` until explicit classes are added.
 - RAW3D `Model.xml` scene metadata and external geometry/texture resources.
 - RAW3D Three.js rendering with source geometry shared across scene nodes.

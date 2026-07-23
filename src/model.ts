@@ -72,6 +72,15 @@ export class Demo3DHeader {
   }
 }
 
+/** A named camera saved in an editable Demo3D project. */
+export class Demo3DView {
+  constructor(
+    public readonly name: string,
+    public readonly position: readonly number[],
+    public readonly target: readonly number[]
+  ) {}
+}
+
 export class Demo3DMaterial extends Demo3DTypedObject {
   get diffuse(): number | undefined {
     return numberValue(this.xml.valueOf("Diffuse"));
@@ -95,6 +104,15 @@ export class Demo3DMaterial extends Demo3DTypedObject {
   }
 }
 
+export interface Demo3DExternalMeshData {
+  readonly meshFormat: string;
+  readonly vertexFormat: string;
+  readonly indexFormat?: string;
+  readonly vertices: Uint8Array;
+  readonly indices?: Uint8Array;
+  readonly auxiliary?: Uint8Array;
+}
+
 export class Demo3DMesh extends Demo3DTypedObject {
   private readonly referenceId?: string;
   readonly meshFormat?: string;
@@ -104,19 +122,23 @@ export class Demo3DMesh extends Demo3DTypedObject {
   readonly indices?: Demo3DBinaryBlock;
   readonly auxiliary?: Demo3DBinaryBlock;
 
-  constructor(typeName: string, xml: Demo3DXmlElement, id?: string) {
+  constructor(typeName: string, xml: Demo3DXmlElement, id?: string, external?: Demo3DExternalMeshData) {
     super(typeName, xml);
     const meshData = xml.child("MeshData");
     const vertices = meshData?.child("V");
     const indices = meshData?.child("I");
 
     this.referenceId = id;
-    this.meshFormat = stringValue(meshData?.valueOf("MF"));
-    this.vertexFormat = stringValue(vertices?.valueOf("VF"));
-    this.indexFormat = stringValue(indices?.valueOf("IF"));
-    this.vertices = binaryValue(vertices?.valueOf("D"));
-    this.indices = binaryValue(indices?.valueOf("D"));
-    this.auxiliary = binaryValue(meshData?.valueOf("A"));
+    this.meshFormat = external?.meshFormat ?? stringValue(meshData?.valueOf("MF"));
+    this.vertexFormat = external?.vertexFormat ?? stringValue(vertices?.valueOf("VF"));
+    this.indexFormat = external?.indexFormat ?? stringValue(indices?.valueOf("IF"));
+    this.vertices = external ? Demo3DBinaryBlock.fromBytes(external.vertices) : binaryValue(vertices?.valueOf("D"));
+    this.indices = external?.indices
+      ? Demo3DBinaryBlock.fromBytes(external.indices)
+      : binaryValue(indices?.valueOf("D"));
+    this.auxiliary = external?.auxiliary
+      ? Demo3DBinaryBlock.fromBytes(external.auxiliary)
+      : binaryValue(meshData?.valueOf("A"));
   }
 
   override get id(): string | undefined {
@@ -172,7 +194,7 @@ export class Demo3DVisual extends Demo3DTypedObject {
 
   constructor(typeName: string, xml: Demo3DXmlElement) {
     super(typeName, xml);
-    this.displayName = xml.textOf("N") ?? xml.textOf("Name");
+    this.displayName = xml.textOf("N") ?? xml.textOf("Name") ?? attributeValue(xml, "Name");
     this.layer = xml.child("P")?.textOf("Layer");
     this.localTransform = numberArrayValue(xml.valueOf("LR"));
     this.initialLocalTransform = numberArrayValue(xml.valueOf("ILR"));
@@ -472,6 +494,8 @@ export class Demo3DProject {
   constructor(
     public readonly root: Demo3DXmlElement,
     public readonly header: Demo3DHeader,
+    public readonly defaultView: string | undefined,
+    public readonly views: readonly Demo3DView[],
     public readonly meshes: readonly Demo3DMesh[],
     public readonly pointClouds: readonly Demo3DPointCloud[],
     public readonly layers: readonly Demo3DLayer[],
@@ -493,7 +517,10 @@ export class Demo3DPackage {
   ) {}
 }
 
-export function extractProject(root: Demo3DXmlElement): Demo3DProject {
+export function extractProject(
+  root: Demo3DXmlElement,
+  externalMeshes: readonly Demo3DMesh[] = []
+): Demo3DProject {
   const typedObjects = collectTypedObjects(root);
   const unknownTypes = new Map<string, number>();
   for (const typedObject of typedObjects) {
@@ -505,13 +532,42 @@ export function extractProject(root: Demo3DXmlElement): Demo3DProject {
   return new Demo3DProject(
     root,
     Demo3DHeader.fromXml(root),
-    extractMeshes(root),
+    root.textOf("DefaultCamera"),
+    extractViews(root),
+    mergeMeshes(extractMeshes(root), externalMeshes),
     extractPointClouds(root),
     extractLayers(root),
     extractVisualRoots(root),
     typedObjects,
     unknownTypes
   );
+}
+
+function mergeMeshes(
+  embedded: readonly Demo3DMesh[],
+  external: readonly Demo3DMesh[]
+): Demo3DMesh[] {
+  const meshes = new Map<string, Demo3DMesh>();
+  for (const mesh of [...embedded, ...external]) {
+    const key = mesh.id ?? mesh.xml.path;
+    meshes.set(key, mesh);
+  }
+  return [...meshes.values()];
+}
+
+function extractViews(root: Demo3DXmlElement): Demo3DView[] {
+  const entries = root.child("Cameras")?.children ?? [];
+  return entries.flatMap((entry) => {
+    const camera = entry.child("val");
+    if (camera?.xsiType !== "e3d:Camera") {
+      return [];
+    }
+    const name = entry.child("key")?.text ?? camera.textOf("Name");
+    if (!name) {
+      return [];
+    }
+    return [new Demo3DView(name, cameraVector(camera.textOf("Position")), cameraVector(camera.textOf("Target")))];
+  });
 }
 
 function extractLayers(root: Demo3DXmlElement): Demo3DLayer[] {
@@ -593,6 +649,11 @@ function findVisualMaterials(root: Demo3DXmlElement): Demo3DXmlElement[] {
 }
 
 function extractVisualRoots(root: Demo3DXmlElement): Demo3DVisual[] {
+  const flatVisuals = root.child("Visuals")?.children.filter(isVisualElement) ?? [];
+  if (flatVisuals.length > 0) {
+    return buildFlatVisualRoots(flatVisuals);
+  }
+
   const roots: Demo3DVisual[] = [];
   const rootChildren = root.child("Scene")?.child("C")?.children ?? root.child("C")?.children ?? findTopLevelVisualContainers(root);
 
@@ -602,6 +663,33 @@ function extractVisualRoots(root: Demo3DXmlElement): Demo3DVisual[] {
     }
   }
 
+  return roots;
+}
+
+function buildFlatVisualRoots(nodes: readonly Demo3DXmlElement[]): Demo3DVisual[] {
+  const visualById = new Map<string, Demo3DVisual>();
+  for (const node of nodes) {
+    const id = node.textOf("Id");
+    if (id) {
+      visualById.set(id, buildVisual(node));
+    }
+  }
+
+  const roots: Demo3DVisual[] = [];
+  for (const node of nodes) {
+    const id = node.textOf("Id");
+    const visual = id ? visualById.get(id) : undefined;
+    if (!visual) {
+      continue;
+    }
+    const parentId = attributeValue(node, "Parent");
+    const parent = parentId ? visualById.get(parentId) : undefined;
+    if (parent) {
+      parent.children.push(visual);
+    } else {
+      roots.push(visual);
+    }
+  }
   return roots;
 }
 
@@ -640,6 +728,10 @@ function isVisualElement(node: Demo3DXmlElement): boolean {
   }
 
   return node.xsiType === "e3d:Visual" || node.xsiType.endsWith("Visual");
+}
+
+function attributeValue(node: Demo3DXmlElement, name: string): string | undefined {
+  return node.attributes.find((attribute) => attribute.localName === name)?.value;
 }
 
 function findDescendants(
@@ -712,6 +804,11 @@ function parsePipeNumbers(value: string): Array<number | undefined> {
     const parsed = Number.parseFloat(trimmed);
     return Number.isFinite(parsed) ? parsed : undefined;
   });
+}
+
+function cameraVector(value: string | undefined): readonly number[] {
+  const values = parsePipeNumbers(value ?? "");
+  return [values[0] ?? 0, values[1] ?? 0, values[2] ?? 0];
 }
 
 function numericChildren(container: Demo3DXmlElement | undefined): number[] {

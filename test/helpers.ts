@@ -82,6 +82,66 @@ export function createZip(entries: readonly TestZipEntry[]): Uint8Array {
   return new Uint8Array(Buffer.concat([body, centralDirectory, eocd]));
 }
 
+export function demo3d2026Fixture(): Uint8Array {
+  const meshId = "mesh-2026";
+  const aspectId = "aspect-2026";
+  const model = `<e3d:Model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
+    <e3d:Header xsi:type="e3d:DocumentHeader">
+      <Product>Demo3D 2026</Product><Version>19.0.0</Version>
+    </e3d:Header>
+    <Visuals>
+      <V Name="Root" Parent="" xsi:type="e3d:SceneVisual">
+        <Id>visual-root</Id><AS valtype="e3d:Guid"><E>${aspectId}</E></AS>
+      </V>
+      <V Name="Child" Parent="visual-root" xsi:type="e3d:Visual"><Id>visual-child</Id></V>
+    </Visuals>
+    <SerializedObjects>
+      <E xsi:type="e3d:MeshRendererAspect">
+        <Id>${aspectId}</Id>
+        <Renderables valtype="e3d:MeshRenderable"><E>
+          <Id>renderable-2026</Id>
+          <MaterialProperties><e><MeshMaterial xsi:type="e3d:MeshMaterial"><Diffuse>-65536</Diffuse></MeshMaterial></e></MaterialProperties>
+          <MeshReference><Id>${meshId}</Id></MeshReference>
+        </E></Renderables>
+      </E>
+    </SerializedObjects>
+  </e3d:Model>`;
+  const map = `<MeshMap>
+    <Version>1</Version>
+    <Meshes><Mesh VertexBuffer="0" IndexBuffers="0" Sections="0" Id="${meshId}" /></Meshes>
+    <Vertices><VertexBuffer Path="v0.dat"><Attribute Usage="Position" /><Attribute Usage="Normal" /></VertexBuffer></Vertices>
+    <Indices><IndexBuffer Path="i0.dat" /></Indices>
+    <Subsets><int>0</int></Subsets>
+  </MeshMap>`;
+  const vertices = new Uint8Array(3 * 24);
+  const vertexView = new DataView(vertices.buffer);
+  const positions = [[0, 0, 0], [1, 0, 0], [0, 1, 0]];
+  for (let index = 0; index < positions.length; index += 1) {
+    const offset = index * 24;
+    vertexView.setFloat32(offset, positions[index]![0]!, true);
+    vertexView.setFloat32(offset + 4, positions[index]![1]!, true);
+    vertexView.setFloat32(offset + 8, positions[index]![2]!, true);
+    vertexView.setFloat32(offset + 12, 0, true);
+    vertexView.setFloat32(offset + 16, 0, true);
+    vertexView.setFloat32(offset + 20, 1, true);
+  }
+  const indices = new Uint8Array(6);
+  const indexView = new DataView(indices.buffer);
+  indexView.setUint16(0, 0, true);
+  indexView.setUint16(2, 1, true);
+  indexView.setUint16(4, 2, true);
+  const sections = new Uint8Array(8);
+  new DataView(sections.buffer).setUint32(4, 3, true);
+
+  return createZip([
+    { name: "Model.xml", data: model, method: 8 },
+    { name: "meshes/map.xml", data: map, method: 8 },
+    { name: "meshes/v0.dat", data: vertices, method: 8 },
+    { name: "meshes/i0.dat", data: indices, method: 8 },
+    { name: "meshes/s0.dat", data: sections, method: 8 }
+  ]);
+}
+
 export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:e3d="uri://emulate3d.com">
   <e3d:Header xsi:type="e3d:DocumentHeader">
     <Id>project-id</Id>
@@ -90,6 +150,10 @@ export const demo3dXmlFixture = `<e3d:Demo3DProject xmlns:xsi="http://www.w3.org
     <Version>18.3.0.53</Version>
     <Edition>Emulate3D</Edition>
   </e3d:Header>
+  <e3d:DefaultCamera>Overview</e3d:DefaultCamera>
+  <e3d:Cameras>
+    <e xsi:type="e3d:DictionaryEntry"><key xsi:type="xsd:string">Overview</key><val xsi:type="e3d:Camera"><Position>|5|4|-3</Position><Target>|1.5|0|</Target></val></e>
+  </e3d:Cameras>
   <MeshLibrary>
     <Meshes>
       <e xsi:type="e3d:DictionaryEntry">

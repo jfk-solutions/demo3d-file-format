@@ -12,6 +12,7 @@ import {
 import { xmlDocumentToElement } from "../src/xml.js";
 import {
   createZip,
+  demo3d2026Fixture,
   demo3dXmlFixture,
   generatedObjectsXmlFixture,
   parseXml,
@@ -19,6 +20,24 @@ import {
 } from "./helpers.js";
 
 describe("parseDemo3D", () => {
+  it("parses Demo3D 2026 Model.xml packages with external mesh caches", async () => {
+    const parsed = await parseDemo3D(demo3d2026Fixture());
+
+    expect(parsed.modelEntryName).toBe("Model.xml");
+    expect(parsed.model.header.product).toBe("Demo3D 2026");
+    expect(parsed.model.meshes).toHaveLength(1);
+    expect(parsed.model.meshes[0]).toMatchObject({
+      id: "mesh-2026",
+      meshFormat: "TriangleList",
+      vertexFormat: "PositionNormal",
+      indexFormat: "UInt16"
+    });
+    expect(parsed.model.meshes[0]?.vertices?.byteLengthEstimate).toBe(72);
+    expect(parsed.model.visuals).toHaveLength(1);
+    expect(parsed.model.visuals[0]).toMatchObject({ id: "visual-root", displayName: "Root" });
+    expect(parsed.model.visuals[0]?.children[0]).toMatchObject({ id: "visual-child", displayName: "Child" });
+  });
+
   it("parses a Demo3D package into a typed object model", async () => {
     const archive = createZip([
       { name: "Thumbnail.png", data: new Uint8Array([1, 2, 3]) },
@@ -34,6 +53,8 @@ describe("parseDemo3D", () => {
     expect(parsed.buffers[0]?.data).toEqual(new Uint8Array([4, 5, 6]));
     expect(parsed.model.header.product).toBe("Demo3D");
     expect(parsed.model.header.version).toBe("18.3.0.53");
+    expect(parsed.model.defaultView).toBe("Overview");
+    expect(parsed.model.views).toEqual([{ name: "Overview", position: [0, 5, 4], target: [0, 1.5, 0] }]);
     expect(parsed.model.meshes).toHaveLength(1);
     expect(parsed.model.meshes[0]?.id).toBe("mesh-1");
     expect(parsed.model.meshes[0]?.meshFormat).toBe("TriangleList");

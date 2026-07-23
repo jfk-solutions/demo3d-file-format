@@ -39,6 +39,13 @@ export {
   type Demo3DThreeWebGPUModule
 } from "./renderer.js";
 
+export {
+  applyDemo3DThreeRenderMode,
+  type Demo3DThreeRenderMode,
+  type Demo3DThreeRenderModeOptions,
+  type Demo3DThreeRenderModeResult
+} from "./presentation.js";
+
 export type ThreeModule = typeof Three;
 
 export interface Demo3DThreeWarning {

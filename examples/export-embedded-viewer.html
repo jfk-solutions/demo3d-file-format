@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo3D Embedded Viewer Export</title>
+    <style>
+      body {
+        max-width: 48rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+        font-family: system-ui, sans-serif;
+        color: #17242a;
+      }
+
+      label,
+      output {
+        display: block;
+        margin-block: 1rem;
+      }
+
+      button {
+        border: 1px solid #71848d;
+        border-radius: 4px;
+        padding: 0.5rem 0.8rem;
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Export embedded Demo3D viewer</h1>
+    <p>Choose a <code>.demo3d</code> or <code>.raw3d</code> file to download a self-contained HTML viewer. The exported page renders the embedded model directly and has no file-open control.</p>
+    <label><input id="model-file" type="file" accept=".demo3d,.raw3d" /></label>
+    <button id="export" type="button" disabled>Download viewer HTML</button>
+    <output id="status">Choose a model file.</output>
+    <!-- The build script replaces this marker in the standalone exporter. -->
+    <script id="demo3d-viewer-template" type="text/plain">__DEMO3D_VIEWER_TEMPLATE_BASE64__</script>
+
+    <script type="module">
+      const input = document.querySelector("#model-file");
+      const exportButton = document.querySelector("#export");
+      const status = document.querySelector("#status");
+      const templateUrl = "../dist/examples/three-render-smoke-standalone.html";
+      const bundledTemplate = readBundledTemplate();
+      let selectedFile = null;
+
+      input.addEventListener("change", () => {
+        selectedFile = input.files?.[0] ?? null;
+        exportButton.disabled = !selectedFile;
+        status.value = selectedFile ? `Ready to embed ${selectedFile.name}.` : "Choose a model file.";
+      });
+
+      exportButton.addEventListener("click", async () => {
+        if (!selectedFile) return;
+
+        exportButton.disabled = true;
+        status.value = "Creating self-contained viewer...";
+        try {
+          const base64 = arrayBufferToBase64(await selectedFile.arrayBuffer());
+          const embeddedModel = JSON.stringify({ name: selectedFile.name, data: base64 });
+          const template = bundledTemplate ?? (await loadViewerTemplate());
+          const viewerHtml = template.replace("__DEMO3D_EMBEDDED_MODEL__", embeddedModel);
+          if (viewerHtml === template) {
+            throw new Error("The viewer template does not contain an embedding marker. Run npm run build again.");
+          }
+
+          const download = document.createElement("a");
+          const fileStem = selectedFile.name.replace(/\.(demo3d|raw3d)$/i, "") || "model";
+          download.href = URL.createObjectURL(new Blob([viewerHtml], { type: "text/html;charset=utf-8" }));
+          download.download = `${fileStem}-viewer.html`;
+          download.click();
+          window.setTimeout(() => URL.revokeObjectURL(download.href), 0);
+          status.value = `Downloaded ${download.download}.`;
+        } catch (error) {
+          status.value = error instanceof Error ? error.message : String(error);
+        } finally {
+          exportButton.disabled = !selectedFile;
+        }
+      });
+
+      function arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        const chunkSize = 0x8000;
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+        }
+        return btoa(binary);
+      }
+
+      async function loadViewerTemplate() {
+        const templateResponse = await fetch(templateUrl, { cache: "no-store" });
+        if (!templateResponse.ok) {
+          throw new Error(`Viewer template could not be loaded (${templateResponse.status}). Run npm run build first.`);
+        }
+        return templateResponse.text();
+      }
+
+      function readBundledTemplate() {
+        const source = document.querySelector("#demo3d-viewer-template")?.textContent?.trim();
+        if (!source || source === "__DEMO3D_VIEWER_TEMPLATE_BASE64__") {
+          return null;
+        }
+
+        try {
+          return new TextDecoder().decode(base64ToBytes(source));
+        } catch {
+          status.value = "The bundled viewer template is invalid.";
+          return null;
+        }
+      }
+
+      function base64ToBytes(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
+      }
+    </script>
+  </body>
+</html>

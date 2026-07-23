@@ -20,15 +20,29 @@ export type Demo3DScalarValue =
   | null;
 
 export class Demo3DBinaryBlock {
-  constructor(public readonly base64: string) {}
+  constructor(
+    public readonly base64: string,
+    private readonly bytes?: Uint8Array
+  ) {}
+
+  static fromBase64(base64: string): Demo3DBinaryBlock {
+    return new Demo3DBinaryBlock(base64);
+  }
+
+  static fromBytes(bytes: Uint8Array): Demo3DBinaryBlock {
+    return new Demo3DBinaryBlock("", bytes);
+  }
 
   get byteLengthEstimate(): number {
+    if (this.bytes) {
+      return this.bytes.byteLength;
+    }
     const cleanLength = this.base64.replace(/\s+/g, "").length;
     return Math.floor((cleanLength * 3) / 4);
   }
 
   toUint8Array(): Uint8Array {
-    return encodeBase64ToBytes(this.base64);
+    return this.bytes ?? encodeBase64ToBytes(this.base64);
   }
 }
 
@@ -178,7 +192,7 @@ export function coerceDemo3DXmlValue(
   }
 
   if ((localName === "D" || localName === "A") && looksLikeBase64(text)) {
-    return new Demo3DBinaryBlock(text);
+    return Demo3DBinaryBlock.fromBase64(text);
   }
 
   return text;

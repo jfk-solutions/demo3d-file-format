@@ -46,6 +46,25 @@
         font: inherit;
       }
 
+      .render-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .render-switch input {
+        inline-size: 2.4rem;
+        block-size: 1.25rem;
+        accent-color: #79bfe0;
+        cursor: pointer;
+      }
+
+      body.embedded #demo3d-file {
+        display: none;
+      }
+
       canvas {
         display: block;
         width: 100%;
@@ -59,14 +78,24 @@
       <input id="demo3d-file" type="file" accept=".demo3d,.raw3d" />
       <button id="fit-main" type="button" disabled>Fit main</button>
       <button id="fit-all" type="button" disabled>Fit all</button>
+      <select id="saved-view" disabled aria-label="Saved view">
+        <option value="">Saved views</option>
+      </select>
+      <label class="render-switch" title="Enable enhanced lighting, soft shadows, and a contact floor">
+        <input id="enhanced-render" type="checkbox" role="switch" />
+        Better render
+      </label>
       <output id="status">Choose a .demo3d or .raw3d file.</output>
     </header>
     <canvas id="viewport"></canvas>
+    <!-- The export page replaces this marker with JSON containing a file name and Base64 data. -->
+    <script id="demo3d-embedded-model" type="application/json">__DEMO3D_EMBEDDED_MODEL__</script>
 
     <script type="module">
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
       import { parseDemo3D, parseRaw3D } from "../dist/index.js";
       import {
+        applyDemo3DThreeRenderMode,
         createDemo3DThreeGroup,
         createDemo3DThreeRenderer,
         createRaw3DThreeGroup
@@ -75,6 +104,8 @@
       const input = document.querySelector("#demo3d-file");
       const fitMain = document.querySelector("#fit-main");
       const fitAll = document.querySelector("#fit-all");
+      const savedView = document.querySelector("#saved-view");
+      const enhancedRender = document.querySelector("#enhanced-render");
       const status = document.querySelector("#status");
       const canvas = document.querySelector("#viewport");
 
@@ -84,12 +115,19 @@
 
       fitMain.addEventListener("click", () => fitCurrentScene("main"));
       fitAll.addEventListener("click", () => fitCurrentScene("all"));
+      savedView.addEventListener("change", () => applySavedView(savedView.value));
+      enhancedRender.addEventListener("change", updateCurrentRenderMode);
 
       input.addEventListener("change", async () => {
         const file = input.files?.[0];
         if (!file) {
           return;
         }
+
+        await renderFile(file);
+      });
+
+      async function renderFile(file) {
 
         window.__demo3dRenderResult = { status: "parsing" };
         status.value = "Parsing...";
@@ -98,6 +136,8 @@
           const isRaw3D = file.name.toLowerCase().endsWith(".raw3d");
           const bytes = await file.arrayBuffer();
           const parsed = isRaw3D ? await parseRaw3D(bytes) : await parseDemo3D(bytes);
+          const views = parsed.model.views;
+          const defaultView = isRaw3D ? undefined : parsed.model.defaultView;
           status.value = "Selecting renderer...";
           disposeCurrentRender();
           const selected = await createDemo3DThreeRenderer({
@@ -130,17 +170,10 @@
           const scene = new THREE.Scene();
           scene.background = new THREE.Color(0x315768);
           scene.add(group);
-          scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x18272d, 1.65));
-          const directional = new THREE.DirectionalLight(0xffffff, 2.1);
-          directional.position.set(50, 80, 40);
-          scene.add(directional);
 
           const renderer = selected.renderer;
           renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
           renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
-          renderer.outputColorSpace = THREE.SRGBColorSpace;
-          renderer.toneMapping = THREE.ACESFilmicToneMapping;
-          renderer.toneMappingExposure = 1.1;
 
           const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 100000);
           const center = frameCamera(THREE, camera, group, "main");
@@ -150,9 +183,32 @@
           controls.update();
           controls.addEventListener("change", () => renderer.render(scene, camera));
 
-          currentRender = { backend: selected.backend, camera, controls, group, renderer, scene, three: THREE };
+          const presentation = applyDemo3DThreeRenderMode({
+            three: THREE,
+            renderer,
+            scene,
+            object: group,
+            mode: selectedRenderMode(),
+            bounds: computeTrimmedBounds(THREE, group)
+          });
+          currentRender = {
+            backend: selected.backend,
+            camera,
+            controls,
+            group,
+            presentation,
+            renderer,
+            scene,
+            three: THREE,
+            views
+          };
           fitMain.disabled = false;
           fitAll.disabled = false;
+          populateSavedViews(views, defaultView);
+          if (defaultView && views.some((view) => view.name === defaultView)) {
+            savedView.value = defaultView;
+            applySavedView(defaultView);
+          }
           window.addEventListener("resize", resizeCurrentRenderer);
 
           renderer.render(scene, camera);
@@ -161,15 +217,17 @@
           window.__demo3dRenderResult = {
             status: "rendered",
             backend: selected.backend,
+            enhancedGround: Boolean(presentation.ground),
             fallback: selected.fallback?.code,
+            renderMode: presentation.mode,
             stats,
             warnings: group.userData.demo3d.warnings.length
           };
           status.value = isRaw3D
-            ? `Rendered RAW3D with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ` +
+            ? `Rendered RAW3D in ${presentation.mode} mode with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ` +
               `${stats.meshes} mesh instances from ${stats.geometries} geometries, ` +
               `${stats.nodes} nodes, ${stats.materials} materials, ${stats.textures} textures.`
-            : `Rendered with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
+            : `Rendered in ${presentation.mode} mode with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
               `(${stats.serializedRenderables} placed renderables, ` +
               `${stats.proceduralBelts} belts, ${stats.proceduralRacks} racks, ` +
               `${stats.proceduralSupportStands} support stands, ` +
@@ -185,7 +243,16 @@
           status.value = "Render failed.";
           throw error;
         }
-      });
+      }
+
+      const embeddedModel = readEmbeddedModel();
+      if (embeddedModel) {
+        document.body.classList.add("embedded");
+        renderFile({
+          name: embeddedModel.name,
+          arrayBuffer: async () => base64ToArrayBuffer(embeddedModel.data)
+        });
+      }
 
       const sampleUrl = new URL(window.location.href).searchParams.get("sample");
       if (sampleUrl) {
@@ -216,6 +283,38 @@
         }
       }
 
+      function readEmbeddedModel() {
+        const element = document.querySelector("#demo3d-embedded-model");
+        const source = element?.textContent?.trim();
+        if (!source || source === "__DEMO3D_EMBEDDED_MODEL__") {
+          return null;
+        }
+
+        try {
+          const model = JSON.parse(source);
+          if (typeof model?.name !== "string" || typeof model?.data !== "string") {
+            throw new Error("The embedded model data is incomplete.");
+          }
+          return model;
+        } catch (error) {
+          window.__demo3dRenderResult = {
+            status: "error",
+            message: error instanceof Error ? error.message : String(error)
+          };
+          status.value = "Embedded model could not be loaded.";
+          return null;
+        }
+      }
+
+      function base64ToArrayBuffer(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes.buffer;
+      }
+
       function fitCurrentScene(mode) {
         if (!currentRender) {
           return;
@@ -223,6 +322,33 @@
 
         const center = frameCamera(currentRender.three, currentRender.camera, currentRender.group, mode);
         currentRender.controls.target.copy(center);
+        currentRender.controls.update();
+        currentRender.renderer.render(currentRender.scene, currentRender.camera);
+      }
+
+      function populateSavedViews(views, defaultView) {
+        savedView.replaceChildren(new Option("Saved views", ""));
+        for (const view of views) {
+          savedView.add(new Option(view.name, view.name, false, view.name === defaultView));
+        }
+        savedView.disabled = views.length === 0;
+      }
+
+      function applySavedView(name) {
+        if (!currentRender || !name) {
+          return;
+        }
+        const view = currentRender.views.find((candidate) => candidate.name === name);
+        if (!view) {
+          return;
+        }
+        // Demo3D and RAW3D use the opposite Z handedness to the Three scene.
+        currentRender.camera.position.set(view.position[0] ?? 0, view.position[1] ?? 0, -(view.position[2] ?? 0));
+        currentRender.controls.target.set(view.target[0] ?? 0, view.target[1] ?? 0, -(view.target[2] ?? 0));
+        const distance = currentRender.camera.position.distanceTo(currentRender.controls.target);
+        currentRender.camera.near = Math.max(distance / 1000, 0.01);
+        currentRender.camera.far = Math.max(distance * 10, 1000);
+        currentRender.camera.updateProjectionMatrix();
         currentRender.controls.update();
         currentRender.renderer.render(currentRender.scene, currentRender.camera);
       }
@@ -239,13 +365,45 @@
         renderer.render(scene, camera);
       }
 
+      function selectedRenderMode() {
+        return enhancedRender.checked ? "enhanced" : "standard";
+      }
+
+      function updateCurrentRenderMode() {
+        if (!currentRender) {
+          return;
+        }
+
+        currentRender.presentation.dispose();
+        currentRender.presentation = applyDemo3DThreeRenderMode({
+          three: currentRender.three,
+          renderer: currentRender.renderer,
+          scene: currentRender.scene,
+          object: currentRender.group,
+          mode: selectedRenderMode(),
+          bounds: computeTrimmedBounds(currentRender.three, currentRender.group)
+        });
+        currentRender.renderer.render(currentRender.scene, currentRender.camera);
+        if (window.__demo3dRenderResult?.status === "rendered") {
+          window.__demo3dRenderResult.renderMode = currentRender.presentation.mode;
+          window.__demo3dRenderResult.enhancedGround = Boolean(currentRender.presentation.ground);
+        }
+        status.value = status.value.replace(
+          /in (standard|enhanced) mode/,
+          `in ${currentRender.presentation.mode} mode`
+        );
+      }
+
       function disposeCurrentRender() {
         if (!currentRender) {
           return;
         }
         currentRender.controls.dispose();
+        currentRender.presentation.dispose();
         currentRender.renderer.dispose();
         currentRender = null;
+        savedView.replaceChildren(new Option("Saved views", ""));
+        savedView.disabled = true;
       }
 
       function frameCamera(THREE, camera, object, mode) {
