@@ -134,7 +134,30 @@ describe("RAW3D support", () => {
     expect(drawables[0]).toBeInstanceOf(three.LineSegments);
     expect(drawables[1]).toBeInstanceOf(three.Points);
   });
+
+  it("hides RAW3D drawing and dimension annotations unless explicitly requested", async () => {
+    const parsed = await parseRaw3D(raw3dAnnotationFixture());
+    const hidden = await createRaw3DThreeGroup(parsed, { three });
+    const shown = await createRaw3DThreeGroup(parsed, { three, showAnnotations: true });
+    const countMeshes = (group: three.Group) => {
+      let count = 0;
+      group.traverse((object) => { if (object instanceof three.Mesh) count += 1; });
+      return count;
+    };
+
+    expect(countMeshes(hidden)).toBe(0);
+    expect(countMeshes(shown)).toBe(1);
+  });
 });
+
+function raw3dAnnotationFixture(): Uint8Array {
+  const model = `<Scene><Nodes><Node Index="0" Name="Dimension1" Mesh="0" Materials="0" /></Nodes><Materials><Material R="1" /></Materials><Meshes><Mesh VertexBuffer="0" IndexBuffers="0" /></Meshes><VertexBuffers><VertexBuffer Path="v0.dat"><Attribute Usage="Position" /></VertexBuffer></VertexBuffers><IndexBuffers><IndexBuffer Path="i0.dat" /></IndexBuffers></Scene>`;
+  return createZip([
+    { name: "Model.xml", data: model },
+    { name: "v0.dat", data: floatBytes([0, 0, 0, 1, 0, 0, 0, 1, 0]) },
+    { name: "i0.dat", data: uint16Bytes([0, 1, 2]) }
+  ]);
+}
 
 function raw3dPrimitiveFixture(): Uint8Array {
   const model = `<Scene><Nodes><Node Index="0" Name="Line" Mesh="0" Materials="0" /><Node Index="1" Name="Points" Mesh="1" Materials="0" /></Nodes><Materials><Material R="1" G="0" B="0" /></Materials><Meshes><Mesh MeshType="LineList" VertexBuffer="0" IndexBuffers="0" /><Mesh MeshType="PointList" VertexBuffer="0" IndexBuffers="0" /></Meshes><VertexBuffers><VertexBuffer Path="v0.dat"><Attribute Usage="Position" /></VertexBuffer></VertexBuffers><IndexBuffers><IndexBuffer Path="i0.dat" /></IndexBuffers></Scene>`;

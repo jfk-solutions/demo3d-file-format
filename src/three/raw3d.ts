@@ -22,6 +22,8 @@ export interface Raw3DThreeOptions {
   readonly three?: Raw3DThreeModule;
   readonly loadThree?: () => Promise<Raw3DThreeModule>;
   readonly onWarning?: (warning: Raw3DThreeWarning) => void;
+  /** Render CAD drawing blocks and dimension annotations. Disabled by default. */
+  readonly showAnnotations?: boolean;
 }
 
 export interface Raw3DThreeStats {
@@ -90,10 +92,12 @@ export async function createRaw3DThreeGroup(
   const defaultMaterial = new three.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.8 });
   const geometryCache = new Map<number, Three.BufferGeometry>();
   const objects = new Map<number, Three.Object3D>();
+  const sourceNodes = new Map(project.nodes.map((node) => [node.index, node]));
   const root = new three.Group();
   root.name = "RAW3D";
 
   for (const node of project.nodes) {
+    const annotationHidden = !options.showAnnotations && isAnnotationNode(node, sourceNodes);
     const object = new three.Group();
     object.name = node.name;
     applyTransform(object, node);
@@ -113,11 +117,12 @@ export async function createRaw3DThreeGroup(
         endPosition: text.endPosition
       } : undefined,
       interactionMode: node.interactionMode,
+      annotationHidden,
       customAttributes: Object.fromEntries(node.customAttributes)
     };
     objects.set(node.index, object);
 
-    if (node.meshIndex !== undefined) {
+    if (!annotationHidden && node.meshIndex !== undefined) {
       const sourceMesh = project.meshes[node.meshIndex];
       if (!sourceMesh) {
         warn({
@@ -159,7 +164,7 @@ export async function createRaw3DThreeGroup(
         }
       }
     }
-    if (text) {
+    if (!annotationHidden && text) {
       const textMaterialIndex = text.materialIndex ?? node.materialIndices[0];
       const sourceMaterial = textMaterialIndex === undefined ? undefined : project.materials[textMaterialIndex];
       const sprite = createTextSprite(text, sourceMaterial, three);
@@ -398,6 +403,20 @@ function primitiveKind(meshType: string): "mesh" | "lines" | "points" {
   }
 }
 
+function isAnnotationNode(
+  node: Raw3DNode,
+  nodes: ReadonlyMap<number, Raw3DNode>
+): boolean {
+  for (let current: Raw3DNode | undefined = node; current; current = current.parentIndex === undefined
+    ? undefined
+    : nodes.get(current.parentIndex)) {
+    if (/^(DrawingBlock|Dimension)/i.test(current.name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function createTextSprite(
   text: Raw3DProject["textObjects"][number],
   sourceMaterial: Raw3DMaterial | undefined,
@@ -440,8 +459,12 @@ function createTextSprite(
     map: texture,
     transparent: true,
     opacity,
+    // Labels share planes with their dimension geometry. Draw them as a readable
+    // annotation layer instead of letting those lines occlude the canvas.
+    depthTest: false,
     depthWrite: false
   }));
+  sprite.renderOrder = 1;
   const scale = Math.max(text.size, 0.001) / fontSize;
   sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
   return sprite;
