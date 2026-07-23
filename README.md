@@ -98,10 +98,22 @@ npm run demo:export
 ```
 
 Open the printed URL, choose either a `.demo3d` or `.raw3d` file, and select
-**Download viewer HTML**. The downloaded `<model>-viewer.html` contains the
-viewer, Three.js, parser, and model data. It can be opened directly with
-`file://` and presents the model immediately without a file-open control. The
-exporter itself is also available as
+an export mode:
+
+- **Generated Three.js objects and cameras (source-protected)** is the default.
+  It converts the
+  model first and creates `<model>-three-viewer.html` containing only serialized
+  Three.js objects, materials, geometry, textures, layer visibility, and
+  cameras. The original archive, `Model.xml`, and other Demo3D project data are
+  not included, so the source `.demo3d` file cannot be extracted from the
+  exported viewer. Rendered mesh data necessarily remains inspectable in any
+  browser-based viewer.
+- **Original Demo3D/RAW3D file (lossless)** creates `<model>-viewer.html` with
+  the original file embedded.
+
+Select **Download viewer HTML** after choosing the mode. The downloaded page can
+be opened directly with `file://` and presents the model immediately without a
+file-open control. The exporter itself is also available as
 `dist/examples/export-embedded-viewer-standalone.html` and can be opened
 directly from the file system.
 

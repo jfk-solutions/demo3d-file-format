@@ -19,6 +19,16 @@
         margin-block: 1rem;
       }
 
+      fieldset {
+        margin-block: 1rem;
+        border: 1px solid #b4c0c5;
+        border-radius: 4px;
+      }
+
+      fieldset label {
+        margin-block: 0.6rem;
+      }
+
       button {
         border: 1px solid #71848d;
         border-radius: 4px;
@@ -29,8 +39,19 @@
   </head>
   <body>
     <h1>Export embedded Demo3D viewer</h1>
-    <p>Choose a <code>.demo3d</code> or <code>.raw3d</code> file to download a self-contained HTML viewer. The exported page renders the embedded model directly and has no file-open control.</p>
+    <p>Choose a <code>.demo3d</code> or <code>.raw3d</code> file to download a self-contained HTML viewer.</p>
     <label><input id="model-file" type="file" accept=".demo3d,.raw3d" /></label>
+    <fieldset>
+      <legend>Embedded data</legend>
+      <label>
+        <input type="radio" name="export-mode" value="three" checked />
+        Generated Three.js objects and cameras (source-protected)
+      </label>
+      <label>
+        <input type="radio" name="export-mode" value="source" />
+        Original Demo3D/RAW3D file (lossless)
+      </label>
+    </fieldset>
     <button id="export" type="button" disabled>Download viewer HTML</button>
     <output id="status">Choose a model file.</output>
     <!-- The build script replaces this marker in the standalone exporter. -->
@@ -56,18 +77,30 @@
         exportButton.disabled = true;
         status.value = "Creating self-contained viewer...";
         try {
-          const base64 = arrayBufferToBase64(await selectedFile.arrayBuffer());
-          const embeddedModel = JSON.stringify({ name: selectedFile.name, data: base64 });
           const template = bundledTemplate ?? (await loadViewerTemplate());
-          const viewerHtml = template.replace("__DEMO3D_EMBEDDED_MODEL__", embeddedModel);
+          const mode = document.querySelector('input[name="export-mode"]:checked')?.value ?? "three";
+          let viewerHtml;
+          let fileSuffix;
+          if (mode === "source") {
+            const base64 = arrayBufferToBase64(await selectedFile.arrayBuffer());
+            const embeddedModel = escapeJsonForHtml(JSON.stringify({ name: selectedFile.name, data: base64 }));
+            viewerHtml = template.replace("__DEMO3D_EMBEDDED_MODEL__", embeddedModel);
+            fileSuffix = "viewer";
+          } else {
+            status.value = "Converting source to generated Three.js objects and cameras...";
+            const snapshot = await createThreeSnapshot(template, selectedFile);
+            const embeddedThree = escapeJsonForHtml(JSON.stringify(snapshot));
+            viewerHtml = template.replace("__DEMO3D_EMBEDDED_THREE__", embeddedThree);
+            fileSuffix = "three-viewer";
+          }
           if (viewerHtml === template) {
-            throw new Error("The viewer template does not contain an embedding marker. Run npm run build again.");
+            throw new Error("The viewer template does not contain the requested embedding marker. Run npm run build again.");
           }
 
           const download = document.createElement("a");
           const fileStem = selectedFile.name.replace(/\.(demo3d|raw3d)$/i, "") || "model";
           download.href = URL.createObjectURL(new Blob([viewerHtml], { type: "text/html;charset=utf-8" }));
-          download.download = `${fileStem}-viewer.html`;
+          download.download = `${fileStem}-${fileSuffix}.html`;
           download.click();
           window.setTimeout(() => URL.revokeObjectURL(download.href), 0);
           status.value = `Downloaded ${download.download}.`;
@@ -86,6 +119,43 @@
           binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
         }
         return btoa(binary);
+      }
+
+      async function createThreeSnapshot(template, file) {
+        const base64 = arrayBufferToBase64(await file.arrayBuffer());
+        const embeddedModel = escapeJsonForHtml(JSON.stringify({ name: file.name, data: base64 }));
+        const conversionHtml = template.replace("__DEMO3D_EMBEDDED_MODEL__", embeddedModel);
+        const frame = document.createElement("iframe");
+        frame.title = "Three.js export conversion";
+        frame.style.cssText =
+          "position:fixed;left:-10000px;top:0;width:1024px;height:768px;visibility:hidden;border:0";
+        document.body.append(frame);
+
+        try {
+          frame.srcdoc = conversionHtml;
+          const deadline = Date.now() + 120_000;
+          while (Date.now() < deadline) {
+            const result = frame.contentWindow?.__demo3dRenderResult;
+            if (result?.status === "error") {
+              throw new Error(result.message || "The model could not be converted to Three.js.");
+            }
+            if (result?.status === "rendered") {
+              const exportSnapshot = frame.contentWindow?.__exportDemo3DThreeSnapshot;
+              if (typeof exportSnapshot !== "function") {
+                throw new Error("The viewer does not support Three.js snapshot export. Run npm run build again.");
+              }
+              return exportSnapshot();
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 50));
+          }
+          throw new Error("Timed out while converting the model to Three.js.");
+        } finally {
+          frame.remove();
+        }
+      }
+
+      function escapeJsonForHtml(json) {
+        return json.replace(/</g, "\\u003c");
       }
 
       async function loadViewerTemplate() {

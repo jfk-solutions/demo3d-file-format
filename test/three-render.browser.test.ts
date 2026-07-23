@@ -174,6 +174,67 @@ test("renders a model embedded in the standalone viewer without a file picker", 
   expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
 });
 
+test("exports and renders a Three.js-only snapshot without the Demo3D archive", async ({ page }) => {
+  const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
+  const standalonePath = join(root, "dist/examples/three-render-smoke-standalone.html");
+  const template = await import("node:fs/promises").then((fs) => fs.readFile(standalonePath, "utf8"));
+  await page.goto(pathToFileURL(standalonePath).href);
+  await page.locator("#demo3d-file").setInputFiles({
+    name: "fixture.demo3d",
+    mimeType: "application/zip",
+    buffer: Buffer.from(fixture)
+  });
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+
+  const snapshot = await page.evaluate(() => window.__exportDemo3DThreeSnapshot());
+  const snapshotJson = JSON.stringify(snapshot);
+  expect(snapshot.format).toBe("demo3d-three-snapshot");
+  expect(snapshot.object.object.type).toBe("Group");
+  expect(snapshot.cameras).toHaveLength(2);
+  expect(snapshot.cameras.map((camera: { role: string }) => camera.role)).toEqual(["current", "saved"]);
+  expect(snapshotJson).not.toContain(Buffer.from(fixture).toString("base64"));
+  expect(snapshotJson).not.toContain("Demo3DProject");
+
+  await page.setContent(
+    template.replace("__DEMO3D_EMBEDDED_THREE__", snapshotJson.replace(/</g, "\\u003c"))
+  );
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+
+  await expect(page.locator("#demo3d-file")).toBeHidden();
+  await expect(page.locator("#saved-view option")).toHaveCount(2);
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.source)).toBe("three-snapshot");
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.stats.meshes)).toBeGreaterThan(0);
+  expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
+});
+
+test("offers Three.js snapshot as an additional exporter mode", async ({ page }) => {
+  const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
+  const exporterPath = join(root, "dist/examples/export-embedded-viewer-standalone.html");
+  await page.goto(pathToFileURL(exporterPath).href);
+  await expect(page.locator('input[name="export-mode"][value="three"]')).toBeChecked();
+  await page.locator("#model-file").setInputFiles({
+    name: "fixture.demo3d",
+    mimeType: "application/zip",
+    buffer: Buffer.from(fixture)
+  });
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.locator("#export").click()
+  ]);
+  expect(download.suggestedFilename()).toBe("fixture-three-viewer.html");
+  const downloadPath = await download.path();
+  if (!downloadPath) throw new Error("The exported viewer download was not saved.");
+  const viewerHtml = await import("node:fs/promises").then((fs) => fs.readFile(downloadPath, "utf8"));
+  expect(viewerHtml).toContain('"format":"demo3d-three-snapshot"');
+  expect(viewerHtml).not.toContain(Buffer.from(fixture).toString("base64"));
+  expect(viewerHtml).not.toContain("Demo3DProject");
+
+  await page.setContent(viewerHtml);
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  expect(await page.evaluate(() => window.__demo3dRenderResult?.source)).toBe("three-snapshot");
+});
+
 test("renders the supplied Demo3D file into a nonblank Three canvas", async ({ page }) => {
   test.skip(!existsSync(samplePath), `Sample file does not exist: ${samplePath}`);
   await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
@@ -258,8 +319,14 @@ function contentType(filePath: string): string {
 
 declare global {
   interface Window {
+    __exportDemo3DThreeSnapshot: () => {
+      format: string;
+      object: { object: { type: string } };
+      cameras: Array<{ role: string }>;
+    };
     __demo3dRenderResult?: {
       status: string;
+      source?: "three-snapshot";
       backend?: "webgpu" | "webgl";
       enhancedGround?: boolean;
       fallback?: string;

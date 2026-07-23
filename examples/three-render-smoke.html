@@ -196,11 +196,15 @@
     </style>
   </head>
   <body>
-    <!-- The export page replaces this marker with JSON containing a file name and Base64 data. -->
+    <!-- The export page replaces one of these markers with either the source file or a Three.js-only snapshot. -->
     <script id="demo3d-embedded-model" type="application/json">__DEMO3D_EMBEDDED_MODEL__</script>
+    <script id="demo3d-embedded-three" type="application/json">__DEMO3D_EMBEDDED_THREE__</script>
     <script>
       // Set this before the header is parsed so an embedded viewer never flashes a file picker.
-      if (document.querySelector("#demo3d-embedded-model")?.textContent?.trim() !== "__DEMO3D_EMBEDDED_MODEL__") {
+      if (
+        document.querySelector("#demo3d-embedded-model")?.textContent?.trim() !== "__DEMO3D_EMBEDDED_MODEL__" ||
+        document.querySelector("#demo3d-embedded-three")?.textContent?.trim() !== "__DEMO3D_EMBEDDED_THREE__"
+      ) {
         document.body.classList.add("embedded");
       }
     </script>
@@ -415,8 +419,13 @@
         }
       }
 
-      const embeddedModel = readEmbeddedModel();
-      if (embeddedModel) {
+      window.__exportDemo3DThreeSnapshot = createThreeSnapshot;
+
+      const embeddedThree = readEmbeddedThreeSnapshot();
+      const embeddedModel = embeddedThree ? null : readEmbeddedModel();
+      if (embeddedThree) {
+        renderThreeSnapshot(embeddedThree);
+      } else if (embeddedModel) {
         renderFile({
           name: embeddedModel.name,
           arrayBuffer: async () => base64ToArrayBuffer(embeddedModel.data)
@@ -473,6 +482,227 @@
           status.value = "Embedded model could not be loaded.";
           return null;
         }
+      }
+
+      function readEmbeddedThreeSnapshot() {
+        const element = document.querySelector("#demo3d-embedded-three");
+        const source = element?.textContent?.trim();
+        if (!source || source === "__DEMO3D_EMBEDDED_THREE__") {
+          return null;
+        }
+
+        try {
+          const snapshot = JSON.parse(source);
+          if (snapshot?.format !== "demo3d-three-snapshot" || !snapshot?.object || !Array.isArray(snapshot?.cameras)) {
+            throw new Error("The embedded Three.js snapshot is incomplete.");
+          }
+          return snapshot;
+        } catch (error) {
+          window.__demo3dRenderResult = {
+            status: "error",
+            message: error instanceof Error ? error.message : String(error)
+          };
+          status.value = "Embedded Three.js snapshot could not be loaded.";
+          return null;
+        }
+      }
+
+      async function renderThreeSnapshot(snapshot) {
+        window.__demo3dRenderResult = { status: "loading-three-snapshot" };
+        status.value = "Loading generated Three.js objects...";
+
+        try {
+          disposeCurrentRender();
+          const selected = await createDemo3DThreeRenderer({
+            canvas,
+            preferWebGPU: rendererMode !== "webgl",
+            antialias: true,
+            preserveDrawingBuffer: true,
+            powerPreference: "high-performance"
+          });
+          const THREE = selected.three;
+          const loader = new THREE.ObjectLoader();
+          const group = loader.parse(snapshot.object);
+          const layerState = deserializeLayerState(snapshot.layers);
+          applyLayerVisibility(group, layerState);
+
+          const scene = new THREE.Scene();
+          scene.background = new THREE.Color(0x315768);
+          scene.add(group);
+
+          const renderer = selected.renderer;
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+          renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+
+          const serializedCurrentCamera = snapshot.cameras.find((entry) => entry.role === "current");
+          const loadedCamera = serializedCurrentCamera?.object
+            ? loader.parse(serializedCurrentCamera.object)
+            : null;
+          const camera = loadedCamera?.isPerspectiveCamera
+            ? loadedCamera
+            : new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 100000);
+          camera.aspect = canvas.clientWidth / canvas.clientHeight;
+          camera.updateProjectionMatrix();
+
+          const center = serializedCurrentCamera?.target
+            ? new THREE.Vector3(...serializedCurrentCamera.target)
+            : frameCamera(THREE, camera, group, "main");
+          const controls = new OrbitControls(camera, canvas);
+          controls.target.copy(center);
+          controls.update();
+          controls.addEventListener("change", () => {
+            updateViewCube();
+            renderer.render(scene, camera);
+          });
+
+          const views = snapshot.cameras
+            .filter((entry) => entry.role === "saved" && entry.object)
+            .map((entry) => ({
+              name: entry.name,
+              camera: loader.parse(entry.object),
+              target: entry.target
+            }));
+          const presentation = applyDemo3DThreeRenderMode({
+            three: THREE,
+            renderer,
+            scene,
+            object: group,
+            mode: selectedRenderMode(),
+            bounds: computeTrimmedBounds(THREE, group)
+          });
+          currentRender = {
+            backend: selected.backend,
+            camera,
+            controls,
+            group,
+            presentation,
+            renderer,
+            scene,
+            three: THREE,
+            views,
+            layerState
+          };
+
+          fitMain.disabled = false;
+          fitAll.disabled = false;
+          topView.disabled = false;
+          sideView.disabled = false;
+          viewCube.hidden = false;
+          updateViewCube();
+          populateSavedViews(views, snapshot.defaultView);
+          populateLayers(layerState);
+          window.addEventListener("resize", resizeCurrentRenderer);
+          renderer.render(scene, camera);
+
+          window.__demo3dRenderResult = {
+            status: "rendered",
+            source: "three-snapshot",
+            backend: selected.backend,
+            enhancedGround: Boolean(presentation.ground),
+            fallback: selected.fallback?.code,
+            renderMode: presentation.mode,
+            stats: snapshot.stats ?? {},
+            warnings: 0
+          };
+          status.value = `Rendered protected Three.js snapshot in ${presentation.mode} mode with ${
+            selected.backend === "webgpu" ? "WebGPU" : "WebGL"
+          }.`;
+        } catch (error) {
+          window.__demo3dRenderResult = {
+            status: "error",
+            message: error instanceof Error ? error.message : String(error)
+          };
+          status.value = "Three.js snapshot render failed.";
+          throw error;
+        }
+      }
+
+      function createThreeSnapshot() {
+        if (!currentRender) {
+          throw new Error("No rendered model is available to export.");
+        }
+
+        const object = currentRender.group.toJSON();
+        sanitizeThreeObjectJson(object.object);
+        const cameras = [{
+          name: "Current view",
+          role: "current",
+          object: currentRender.camera.toJSON(),
+          target: currentRender.controls.target.toArray()
+        }];
+
+        for (const view of currentRender.views) {
+          if (view.camera?.isCamera) {
+            cameras.push({
+              name: view.name,
+              role: "saved",
+              object: view.camera.toJSON(),
+              target: Array.from(view.target ?? [0, 0, 0])
+            });
+            continue;
+          }
+
+          const camera = currentRender.camera.clone();
+          const target = new currentRender.three.Vector3(
+            view.target[0] ?? 0,
+            view.target[1] ?? 0,
+            -(view.target[2] ?? 0)
+          );
+          camera.position.set(view.position[0] ?? 0, view.position[1] ?? 0, -(view.position[2] ?? 0));
+          camera.lookAt(target);
+          camera.updateMatrixWorld(true);
+          cameras.push({
+            name: view.name,
+            role: "saved",
+            object: camera.toJSON(),
+            target: target.toArray()
+          });
+        }
+
+        return {
+          format: "demo3d-three-snapshot",
+          version: 1,
+          object,
+          cameras,
+          defaultView: savedView.value || undefined,
+          layers: serializeLayerState(currentRender.layerState),
+          stats: currentRender.group.userData.demo3d?.stats ?? window.__demo3dRenderResult?.stats ?? {}
+        };
+      }
+
+      function sanitizeThreeObjectJson(object) {
+        if (!object) return;
+        const demo3d = object.userData?.demo3d;
+        const raw3d = object.userData?.raw3d;
+        const userData = {};
+        if (demo3d?.kind === "visual" && demo3d.layer !== undefined) {
+          userData.demo3d = { kind: "visual", layer: demo3d.layer };
+        }
+        if (raw3d?.kind === "node" && raw3d.layerIndex !== undefined) {
+          userData.raw3d = { kind: "node", layerIndex: raw3d.layerIndex };
+        }
+        if (Object.keys(userData).length > 0) {
+          object.userData = userData;
+        } else {
+          delete object.userData;
+        }
+        for (const child of object.children ?? []) sanitizeThreeObjectJson(child);
+      }
+
+      function serializeLayerState(layerState) {
+        return {
+          isRaw3D: layerState.isRaw3D,
+          layers: layerState.layers,
+          visibility: Array.from(layerState.visibility.entries())
+        };
+      }
+
+      function deserializeLayerState(layers) {
+        return {
+          isRaw3D: Boolean(layers?.isRaw3D),
+          layers: Array.isArray(layers?.layers) ? layers.layers : [],
+          visibility: new Map(Array.isArray(layers?.visibility) ? layers.visibility : [])
+        };
       }
 
       function base64ToArrayBuffer(base64) {
@@ -613,9 +843,18 @@
         if (!view) {
           return;
         }
-        // Demo3D and RAW3D use the opposite Z handedness to the Three scene.
-        currentRender.camera.position.set(view.position[0] ?? 0, view.position[1] ?? 0, -(view.position[2] ?? 0));
-        currentRender.controls.target.set(view.target[0] ?? 0, view.target[1] ?? 0, -(view.target[2] ?? 0));
+        if (view.camera?.isPerspectiveCamera) {
+          currentRender.camera.position.copy(view.camera.position);
+          currentRender.camera.quaternion.copy(view.camera.quaternion);
+          currentRender.camera.up.copy(view.camera.up);
+          currentRender.camera.fov = view.camera.fov;
+          currentRender.camera.zoom = view.camera.zoom;
+          currentRender.controls.target.fromArray(view.target ?? [0, 0, 0]);
+        } else {
+          // Demo3D and RAW3D use the opposite Z handedness to the Three scene.
+          currentRender.camera.position.set(view.position[0] ?? 0, view.position[1] ?? 0, -(view.position[2] ?? 0));
+          currentRender.controls.target.set(view.target[0] ?? 0, view.target[1] ?? 0, -(view.target[2] ?? 0));
+        }
         const distance = currentRender.camera.position.distanceTo(currentRender.controls.target);
         currentRender.camera.near = Math.max(distance / 1000, 0.01);
         currentRender.camera.far = Math.max(distance * 10, 1000);
