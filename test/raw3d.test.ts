@@ -41,6 +41,7 @@ describe("RAW3D support", () => {
     expect(parsed.model.textObjects[0]).toMatchObject({
       value: "Triangle label",
       size: 0.1,
+      fontFamily: "Arial",
       materialIndex: 0,
       verticalAlign: 0
     });

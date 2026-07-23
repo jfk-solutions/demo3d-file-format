@@ -73,6 +73,7 @@ export class Raw3DText {
   constructor(
     public readonly value: string,
     public readonly size: number,
+    public readonly fontFamily: string,
     public readonly materialIndex: number | undefined,
     public readonly verticalAlign: number,
     public readonly startPosition: readonly number[],
@@ -268,6 +269,7 @@ async function extractRaw3DProject(
     (root.child("TextObjects")?.childrenNamed("Text") ?? []).map((element) => new Raw3DText(
       attribute(element, "Value") ?? "",
       numberAttribute(element, "Size", 0.1),
+      attribute(element, "FontFamily") ?? "Arial",
       integerAttribute(element, "Material"),
       integerAttribute(element, "VerticalAlign") ?? 0,
       numberList(attribute(element, "StartPosition")),

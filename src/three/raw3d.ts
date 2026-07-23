@@ -159,6 +159,16 @@ export async function createRaw3DThreeGroup(
         }
       }
     }
+    if (text) {
+      const textMaterialIndex = text.materialIndex ?? node.materialIndices[0];
+      const sourceMaterial = textMaterialIndex === undefined ? undefined : project.materials[textMaterialIndex];
+      const sprite = createTextSprite(text, sourceMaterial, three);
+      if (sprite) {
+        sprite.name = `${node.name} Text`;
+        sprite.userData.raw3d = { kind: "text", nodeIndex: node.index, textIndex: node.textIndex };
+        object.add(sprite);
+      }
+    }
   }
 
   for (const source of project.lights) {
@@ -386,6 +396,55 @@ function primitiveKind(meshType: string): "mesh" | "lines" | "points" {
     case "pointlist": return "points";
     default: return "mesh";
   }
+}
+
+function createTextSprite(
+  text: Raw3DProject["textObjects"][number],
+  sourceMaterial: Raw3DMaterial | undefined,
+  three: Raw3DThreeModule
+): Three.Sprite | undefined {
+  if (typeof document === "undefined") {
+    return undefined;
+  }
+  const lines = text.value.replace(/\r\n?/g, "\n").split("\n");
+  const fontSize = 100;
+  const lineHeight = 120;
+  const padding = 20;
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return undefined;
+  }
+  context.font = `${fontSize}px ${text.fontFamily || "Arial"}`;
+  const width = Math.max(1, ...lines.map((line) => context.measureText(line).width));
+  canvas.width = Math.ceil(width + padding * 2);
+  canvas.height = Math.max(1, lines.length * lineHeight + padding * 2);
+  const drawContext = canvas.getContext("2d");
+  if (!drawContext) {
+    return undefined;
+  }
+  drawContext.font = `${fontSize}px ${text.fontFamily || "Arial"}`;
+  drawContext.textAlign = "center";
+  drawContext.textBaseline = "middle";
+  const color = sourceMaterial
+    ? `rgb(${Math.round(clamp01(sourceMaterial.red) * 255)}, ${Math.round(clamp01(sourceMaterial.green) * 255)}, ${Math.round(clamp01(sourceMaterial.blue) * 255)})`
+    : "rgb(0, 0, 0)";
+  drawContext.fillStyle = color;
+  lines.forEach((line, index) => {
+    drawContext.fillText(line, canvas.width / 2, padding + lineHeight * (index + 0.5));
+  });
+  const opacity = sourceMaterial ? 1 - clamp01(sourceMaterial.transparency) : 1;
+  const texture = new three.CanvasTexture(canvas);
+  texture.colorSpace = three.SRGBColorSpace;
+  const sprite = new three.Sprite(new three.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    opacity,
+    depthWrite: false
+  }));
+  const scale = Math.max(text.size, 0.001) / fontSize;
+  sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
+  return sprite;
 }
 
 function resolveNodeMaterials(
