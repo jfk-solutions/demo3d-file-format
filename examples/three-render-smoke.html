@@ -30,6 +30,7 @@
 
       header {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: 1rem;
         padding: 0.75rem 1rem;
@@ -65,11 +66,93 @@
         display: none;
       }
 
-      canvas {
+      #viewport-shell {
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      #viewport {
         display: block;
         width: 100%;
         height: 100%;
         background: #315768;
+      }
+
+      .view-cube {
+        --cube-size: 4.5rem;
+        position: absolute;
+        inset-block-end: 1.25rem;
+        inset-inline-start: 1.25rem;
+        width: 6.5rem;
+        height: 6.5rem;
+        display: grid;
+        place-items: center;
+        perspective: 22rem;
+        touch-action: none;
+        user-select: none;
+        cursor: grab;
+      }
+
+      .view-cube:active {
+        cursor: grabbing;
+      }
+
+      .view-cube[hidden] {
+        display: none;
+      }
+
+      .view-cube-rotator {
+        position: relative;
+        width: var(--cube-size);
+        height: var(--cube-size);
+        transform-style: preserve-3d;
+        pointer-events: none;
+      }
+
+      .view-cube-face {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(23, 36, 42, 0.8);
+        padding: 0;
+        color: #17242a;
+        background: rgba(232, 238, 241, 0.88);
+        font-size: 0.8rem;
+        font-weight: 700;
+        backface-visibility: hidden;
+        pointer-events: auto;
+        cursor: pointer;
+      }
+
+      .view-cube-face:hover,
+      .view-cube-face:focus-visible {
+        background: #79bfe0;
+      }
+
+      .view-cube-face[data-view="right"] {
+        transform: rotateY(90deg) translateZ(calc(var(--cube-size) / 2));
+      }
+
+      .view-cube-face[data-view="left"] {
+        transform: rotateY(-90deg) translateZ(calc(var(--cube-size) / 2));
+      }
+
+      .view-cube-face[data-view="top"] {
+        transform: rotateX(90deg) translateZ(calc(var(--cube-size) / 2));
+      }
+
+      .view-cube-face[data-view="bottom"] {
+        transform: rotateX(-90deg) translateZ(calc(var(--cube-size) / 2));
+      }
+
+      .view-cube-face[data-view="front"] {
+        transform: translateZ(calc(var(--cube-size) / 2));
+      }
+
+      .view-cube-face[data-view="back"] {
+        transform: rotateY(180deg) translateZ(calc(var(--cube-size) / 2));
       }
     </style>
   </head>
@@ -86,6 +169,8 @@
       <input id="demo3d-file" type="file" accept=".demo3d,.raw3d" />
       <button id="fit-main" type="button" disabled>Fit main</button>
       <button id="fit-all" type="button" disabled>Fit all</button>
+      <button id="top-view" type="button" disabled>Top view</button>
+      <button id="side-view" type="button" disabled>Side view</button>
       <select id="saved-view" disabled aria-label="Saved view">
         <option value="">Saved views</option>
       </select>
@@ -95,7 +180,19 @@
       </label>
       <output id="status">Choose a .demo3d or .raw3d file.</output>
     </header>
-    <canvas id="viewport"></canvas>
+    <main id="viewport-shell">
+      <canvas id="viewport"></canvas>
+      <div id="view-cube" class="view-cube" aria-label="Coordinate cube: click a face or drag to rotate" hidden>
+        <div id="view-cube-rotator" class="view-cube-rotator">
+          <button class="view-cube-face" data-view="right" type="button" title="View from +X">+X</button>
+          <button class="view-cube-face" data-view="left" type="button" title="View from -X">−X</button>
+          <button class="view-cube-face" data-view="top" type="button" title="Top view (+Y)">+Y</button>
+          <button class="view-cube-face" data-view="bottom" type="button" title="Bottom view (-Y)">−Y</button>
+          <button class="view-cube-face" data-view="front" type="button" title="View from +Z">+Z</button>
+          <button class="view-cube-face" data-view="back" type="button" title="View from -Z">−Z</button>
+        </div>
+      </div>
+    </main>
 
     <script type="module">
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -110,10 +207,14 @@
       const input = document.querySelector("#demo3d-file");
       const fitMain = document.querySelector("#fit-main");
       const fitAll = document.querySelector("#fit-all");
+      const topView = document.querySelector("#top-view");
+      const sideView = document.querySelector("#side-view");
       const savedView = document.querySelector("#saved-view");
       const enhancedRender = document.querySelector("#enhanced-render");
       const status = document.querySelector("#status");
       const canvas = document.querySelector("#viewport");
+      const viewCube = document.querySelector("#view-cube");
+      const viewCubeRotator = document.querySelector("#view-cube-rotator");
 
       window.__demo3dRenderResult = { status: "idle" };
       let currentRender = null;
@@ -121,8 +222,11 @@
 
       fitMain.addEventListener("click", () => fitCurrentScene("main"));
       fitAll.addEventListener("click", () => fitCurrentScene("all"));
+      topView.addEventListener("click", () => applyAxisView("top"));
+      sideView.addEventListener("click", () => applyAxisView("side"));
       savedView.addEventListener("change", () => applySavedView(savedView.value));
       enhancedRender.addEventListener("change", updateCurrentRenderMode);
+      initializeViewCube();
 
       input.addEventListener("change", async () => {
         const file = input.files?.[0];
@@ -187,7 +291,10 @@
           const controls = new OrbitControls(camera, canvas);
           controls.target.copy(center);
           controls.update();
-          controls.addEventListener("change", () => renderer.render(scene, camera));
+          controls.addEventListener("change", () => {
+            updateViewCube();
+            renderer.render(scene, camera);
+          });
 
           const presentation = applyDemo3DThreeRenderMode({
             three: THREE,
@@ -210,6 +317,10 @@
           };
           fitMain.disabled = false;
           fitAll.disabled = false;
+          topView.disabled = false;
+          sideView.disabled = false;
+          viewCube.hidden = false;
+          updateViewCube();
           populateSavedViews(views, defaultView);
           if (defaultView && views.some((view) => view.name === defaultView)) {
             savedView.value = defaultView;
@@ -331,6 +442,53 @@
         currentRender.renderer.render(currentRender.scene, currentRender.camera);
       }
 
+      function applyAxisView(view) {
+        if (!currentRender) {
+          return;
+        }
+
+        const { camera, controls, group, renderer, scene, three: THREE } = currentRender;
+        const box = computeTrimmedBounds(THREE, group);
+        const center = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+        const size = box.isEmpty() ? new THREE.Vector3(1, 1, 1) : box.getSize(new THREE.Vector3());
+        const axisViews = {
+          top: { direction: [0, 1, 0], up: [0, 0, -1], horizontalSize: size.x, verticalSize: size.z, depthSize: size.y },
+          bottom: { direction: [0, -1, 0], up: [0, 0, 1], horizontalSize: size.x, verticalSize: size.z, depthSize: size.y },
+          side: { direction: [1, 0, 0], up: [0, 1, 0], horizontalSize: size.z, verticalSize: size.y, depthSize: size.x },
+          right: { direction: [1, 0, 0], up: [0, 1, 0], horizontalSize: size.z, verticalSize: size.y, depthSize: size.x },
+          left: { direction: [-1, 0, 0], up: [0, 1, 0], horizontalSize: size.z, verticalSize: size.y, depthSize: size.x },
+          front: { direction: [0, 0, 1], up: [0, 1, 0], horizontalSize: size.x, verticalSize: size.y, depthSize: size.z },
+          back: { direction: [0, 0, -1], up: [0, 1, 0], horizontalSize: size.x, verticalSize: size.y, depthSize: size.z }
+        };
+        const selectedView = axisViews[view];
+        if (!selectedView) {
+          return;
+        }
+        const horizontalSize = Math.max(selectedView.horizontalSize, 1);
+        const verticalSize = Math.max(selectedView.verticalSize, 1);
+        const depthSize = Math.max(selectedView.depthSize, 1);
+        const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+        const distanceForHeight = verticalSize / (2 * Math.tan(verticalFov / 2));
+        const distanceForWidth = horizontalSize / (2 * Math.tan(verticalFov / 2) * camera.aspect);
+        const distance = Math.max(distanceForHeight, distanceForWidth) * 1.15 + depthSize / 2;
+
+        camera.position.copy(center).add(
+          new THREE.Vector3(...selectedView.direction).multiplyScalar(distance)
+        );
+        camera.up.set(...selectedView.up);
+        camera.near = Math.max((distance - depthSize) / 1000, 0.01);
+        camera.far = Math.max(distance + depthSize * 2, 1000);
+        camera.updateProjectionMatrix();
+        controls.target.copy(center);
+        controls.update();
+        savedView.value = "";
+        renderer.render(scene, camera);
+
+        if (window.__demo3dRenderResult?.status === "rendered") {
+          window.__demo3dRenderResult.activeView = view;
+        }
+      }
+
       function populateSavedViews(views, defaultView) {
         savedView.replaceChildren(new Option("Saved views", ""));
         for (const view of views) {
@@ -407,8 +565,106 @@
         currentRender.presentation.dispose();
         currentRender.renderer.dispose();
         currentRender = null;
+        fitMain.disabled = true;
+        fitAll.disabled = true;
+        topView.disabled = true;
+        sideView.disabled = true;
+        viewCube.hidden = true;
         savedView.replaceChildren(new Option("Saved views", ""));
         savedView.disabled = true;
+      }
+
+      function initializeViewCube() {
+        let pointerId = null;
+        let pressedView = null;
+        let previousX = 0;
+        let previousY = 0;
+        let dragged = false;
+        let previousClickView = null;
+        let previousClickTime = 0;
+
+        viewCube.addEventListener("pointerdown", (event) => {
+          if (!currentRender || event.button !== 0) {
+            return;
+          }
+          pointerId = event.pointerId;
+          pressedView = event.target.closest("[data-view]")?.dataset.view ?? null;
+          previousX = event.clientX;
+          previousY = event.clientY;
+          dragged = false;
+          viewCube.setPointerCapture(pointerId);
+        });
+
+        viewCube.addEventListener("pointermove", (event) => {
+          if (!currentRender || event.pointerId !== pointerId) {
+            return;
+          }
+          const deltaX = event.clientX - previousX;
+          const deltaY = event.clientY - previousY;
+          previousX = event.clientX;
+          previousY = event.clientY;
+          dragged ||= Math.abs(deltaX) + Math.abs(deltaY) > 1;
+          if (!dragged) {
+            return;
+          }
+
+          const { camera, controls, renderer, scene, three: THREE } = currentRender;
+          const offset = camera.position.clone().sub(controls.target);
+          const spherical = new THREE.Spherical().setFromVector3(offset);
+          spherical.theta -= deltaX * 0.012;
+          spherical.phi = THREE.MathUtils.clamp(spherical.phi - deltaY * 0.012, 0.001, Math.PI - 0.001);
+          camera.up.set(0, 1, 0);
+          camera.position.copy(controls.target).add(offset.setFromSpherical(spherical));
+          controls.update();
+          savedView.value = "";
+          renderer.render(scene, camera);
+          if (window.__demo3dRenderResult?.status === "rendered") {
+            window.__demo3dRenderResult.activeView = "custom";
+          }
+          event.preventDefault();
+        });
+
+        viewCube.addEventListener("pointerup", (event) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+          viewCube.releasePointerCapture(pointerId);
+          pointerId = null;
+          if (!dragged && pressedView) {
+            const clickTime = performance.now();
+            if (previousClickView === pressedView && clickTime - previousClickTime <= 500) {
+              applyAxisView(pressedView);
+              previousClickView = null;
+              previousClickTime = 0;
+            } else {
+              previousClickView = pressedView;
+              previousClickTime = clickTime;
+            }
+          }
+          pressedView = null;
+          dragged = false;
+        });
+
+        viewCube.addEventListener("click", (event) => {
+          // Keyboard activation of a face produces a click without pointer coordinates.
+          if (event.detail === 0) {
+            const face = event.target.closest("[data-view]");
+            if (face) {
+              applyAxisView(face.dataset.view);
+            }
+          }
+        });
+      }
+
+      function updateViewCube() {
+        if (!currentRender) {
+          return;
+        }
+        const offset = currentRender.camera.position.clone().sub(currentRender.controls.target);
+        const radius = Math.max(offset.length(), 0.001);
+        const yaw = Math.atan2(offset.x, offset.z) * 180 / Math.PI;
+        const pitch = Math.asin(offset.y / radius) * 180 / Math.PI;
+        viewCubeRotator.style.transform = `rotateX(${pitch}deg) rotateY(${-yaw}deg)`;
       }
 
       function frameCamera(THREE, camera, object, mode) {

@@ -70,6 +70,41 @@ test("switches an already rendered scene to the enhanced mode", async ({ page })
   expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
 });
 
+test("switches the camera to top and side views", async ({ page }) => {
+  const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
+  await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
+  await page.locator("#demo3d-file").setInputFiles({
+    name: "fixture.demo3d",
+    mimeType: "application/zip",
+    buffer: Buffer.from(fixture)
+  });
+
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  await expect(page.locator("#top-view")).toBeEnabled();
+  await expect(page.locator("#side-view")).toBeEnabled();
+  await expect(page.locator("#view-cube")).toBeVisible();
+
+  await page.locator("#top-view").click();
+  await expect.poll(async () => page.evaluate(() => window.__demo3dRenderResult?.activeView)).toBe("top");
+  expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
+
+  await page.locator("#side-view").click();
+  await expect.poll(async () => page.evaluate(() => window.__demo3dRenderResult?.activeView)).toBe("side");
+  expect((await page.locator("#viewport").screenshot()).byteLength).toBeGreaterThan(1_000);
+
+  await page.locator('.view-cube-face[data-view="right"]').dblclick({ force: true });
+  await expect.poll(async () => page.evaluate(() => window.__demo3dRenderResult?.activeView)).toBe("right");
+
+  const cube = page.locator("#view-cube");
+  const bounds = await cube.boundingBox();
+  if (!bounds) throw new Error("Coordinate cube is not visible.");
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width / 2 + 25, bounds.y + bounds.height / 2 + 15);
+  await page.mouse.up();
+  await expect.poll(async () => page.evaluate(() => window.__demo3dRenderResult?.activeView)).toBe("custom");
+});
+
 test("runs the compiled standalone page directly from the file system", async ({ page }) => {
   const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
   const standalonePath = join(root, "dist/examples/three-render-smoke-standalone.html");
@@ -210,6 +245,7 @@ declare global {
       enhancedGround?: boolean;
       fallback?: string;
       renderMode?: "standard" | "enhanced";
+      activeView?: "top" | "bottom" | "side" | "right" | "left" | "front" | "back" | "custom";
       stats: {
         meshes: number;
         geometries: number;
