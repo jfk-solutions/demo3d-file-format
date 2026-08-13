@@ -202,6 +202,42 @@ export async function createDemo3DThreeGroup(
   return root;
 }
 
+/** Dispose geometries, materials, and textures owned by a generated Demo3D or RAW3D group. */
+export function disposeDemo3DThreeGroup(root: Three.Object3D): void {
+  const geometries = new Set<Three.BufferGeometry>();
+  const materials = new Set<Three.Material>();
+  const textures = new Set<Three.Texture>();
+  root.traverse((object) => {
+    const renderable = object as Three.Mesh & {
+      geometry?: Three.BufferGeometry;
+      material?: Three.Material | Three.Material[];
+    };
+    if (renderable.geometry) {
+      geometries.add(renderable.geometry);
+    }
+    const objectMaterials = Array.isArray(renderable.material)
+      ? renderable.material
+      : renderable.material ? [renderable.material] : [];
+    for (const material of objectMaterials) {
+      materials.add(material);
+      for (const value of Object.values(material)) {
+        if ((value as Three.Texture | undefined)?.isTexture) {
+          textures.add(value as Three.Texture);
+        }
+      }
+    }
+  });
+  for (const geometry of geometries) {
+    geometry.dispose();
+  }
+  for (const material of materials) {
+    material.dispose();
+  }
+  for (const texture of textures) {
+    texture.dispose();
+  }
+}
+
 export function decodeDemo3DThreeGeometry(mesh: Demo3DMesh, three: ThreeModule): Three.BufferGeometry {
   if (mesh.meshFormat !== "TriangleList") {
     throw new Error(`Unsupported Demo3D mesh format: ${mesh.meshFormat ?? "unknown"}`);

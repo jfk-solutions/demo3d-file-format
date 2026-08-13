@@ -4,7 +4,8 @@ import { parseDemo3D } from "../src/index.js";
 import {
   createDemo3DThreeGroup,
   decodeDemo3DThreeGeometry,
-  createDemo3DThreeMaterial
+  createDemo3DThreeMaterial,
+  disposeDemo3DThreeGroup
 } from "../src/three/index.js";
 import {
   annularCylinderXmlFixture,
@@ -20,6 +21,23 @@ import {
 describe("Three renderer adapter", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("disposes generated geometry, materials, and textures once", () => {
+    const group = new three.Group();
+    const geometry = new three.BoxGeometry();
+    const texture = new three.Texture();
+    const material = new three.MeshStandardMaterial({ map: texture });
+    const geometryDispose = vi.spyOn(geometry, "dispose");
+    const materialDispose = vi.spyOn(material, "dispose");
+    const textureDispose = vi.spyOn(texture, "dispose");
+    group.add(new three.Mesh(geometry, material), new three.Mesh(geometry, material));
+
+    disposeDemo3DThreeGroup(group);
+
+    expect(geometryDispose).toHaveBeenCalledOnce();
+    expect(materialDispose).toHaveBeenCalledOnce();
+    expect(textureDispose).toHaveBeenCalledOnce();
   });
 
   it("renders Demo3D 2026 external mesh-cache geometry", async () => {
