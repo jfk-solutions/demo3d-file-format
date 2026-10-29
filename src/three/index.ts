@@ -19,6 +19,8 @@ import { Demo3DBinaryBlock, Demo3DXmlElement } from "../xml.js";
 
 export {
   createRaw3DThreeGroup,
+  createRaw3DThreePlayback,
+  type Raw3DThreePlayback,
   createRaw3DThreeScene,
   decodeRaw3DThreeGeometry,
   type Raw3DThreeModule,

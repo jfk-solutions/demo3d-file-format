@@ -30,7 +30,7 @@ describe("RAW3D support", () => {
       red: 0.25,
       green: 0.5,
       blue: 0.75,
-      transparency: 0.2
+      transparency: 0.8
     });
     expect(parsed.model.meshes[0]).toMatchObject({ vertexBufferIndex: 0, indexBufferIndices: [0] });
     expect(parsed.model.meshes[0]?.meshType).toBe("TriangleList");
@@ -74,7 +74,7 @@ describe("RAW3D support", () => {
     expect(child.position.toArray()).toEqual([1, 2, -3]);
     expect(child.rotation.order).toBe("YXZ");
     expect(mesh.material).toBeInstanceOf(three.MeshStandardMaterial);
-    expect((mesh.material as three.MeshStandardMaterial).opacity).toBeCloseTo(0.8);
+    expect((mesh.material as three.MeshStandardMaterial).opacity).toBeCloseTo(0.2);
     expect(child.userData.raw3d).toMatchObject({
       textIndex: 0,
       interactionMode: 8,

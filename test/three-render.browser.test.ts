@@ -47,6 +47,66 @@ test.afterAll(async () => {
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 });
 
+test("plays and reversibly seeks native RAW3D animation in the standalone viewer", async ({ page }) => {
+  const fixture = createZip([
+    { name: "Model.xml", data: `<Scene><Nodes><Node Index="0" Name="Moving" Mesh="0" Materials="0"/></Nodes>
+      <Materials><Material R="1" G="0" B="0"/></Materials><Meshes><Mesh VertexBuffer="0" IndexBuffers="0"/></Meshes>
+      <VertexBuffers><VertexBuffer Path="v.dat"><Attribute Usage="Position" Type="Vector3"/></VertexBuffer></VertexBuffers>
+      <IndexBuffers><IndexBuffer Path="i.dat" Format="Int16"/></IndexBuffers>
+      <Updates><X Node="0" Time="0 2" Value="0 2"/><Visible Node="0" Time="0 1 2" Value="true false true"/></Updates></Scene>` },
+    { name: "v.dat", data: new Uint8Array(new Float32Array([0,0,0,1,0,0,0,1,0]).buffer) },
+    { name: "i.dat", data: new Uint8Array(new Uint16Array([0,1,2]).buffer) }
+  ]);
+  await page.goto(pathToFileURL(join(root, "dist/examples/three-render-smoke-standalone.html")).href + "?renderer=webgl");
+  await page.locator("#demo3d-file").setInputFiles({ name: "animation.raw3d", mimeType: "application/zip", buffer: Buffer.from(fixture) });
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  await expect(page.locator("#animation-controls")).toBeVisible();
+  const snapshot = () => page.evaluate(() => {
+    const root = window.__exportDemo3DThreeSnapshot().object.object as unknown as { children: Array<{ matrix: number[]; children: Array<{ visible?: boolean }> }> };
+    return { x: root.children[0]!.matrix[12], visible: root.children[0]!.children[0]!.visible !== false };
+  });
+  expect(await snapshot()).toEqual({ x: 0, visible: true });
+  await page.locator("#animation-time").fill("1");
+  expect(await snapshot()).toEqual({ x: 1, visible: false });
+  await page.locator("#animation-time").fill("0");
+  expect(await snapshot()).toEqual({ x: 0, visible: true });
+  await page.locator("#animation-play").click();
+  await expect.poll(() => page.locator("#animation-time").inputValue().then(Number)).toBeGreaterThan(.05);
+  await page.locator("#animation-play").click();
+});
+
+test("renders native skinning and light shader parameters while replaying UI state", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  const fixture = createZip([
+    { name: "Model.xml", data: `<Scene><Nodes><Node Index="0" Name="Joint"/>
+      <Node Index="1" Name="Skin" Mesh="0" Materials="0"/></Nodes>
+      <Buttons><UIButton Index="0" Name="Recorded action"/></Buttons>
+      <Materials><Material R="1" G="0.4" B="0.2"/></Materials>
+      <Meshes><Mesh VertexBuffer="0" IndexBuffers="0"><Bones><Bone Parent="0" SkinIndexBuffer="1" SkinWeightsVertexBuffer="1"/></Bones></Mesh></Meshes>
+      <VertexBuffers><VertexBuffer Path="v.dat"><Attribute Usage="Position" Type="Vector3"/></VertexBuffer>
+      <VertexBuffer Path="w.dat"><Attribute Usage="Position" Type="Single"/></VertexBuffer></VertexBuffers>
+      <IndexBuffers><IndexBuffer Path="i.dat" Format="Int16"/><IndexBuffer Path="skin.dat" Format="Int16"/></IndexBuffers>
+      <Lights><Light Index="0" Node="0" Type="Point" Enabled="true" AttenuationConstant="1" AttenuationQuadratic="0.2"/>
+      <Light Index="1" Node="0" Type="Spot" Enabled="true" AttenuationConstant="1" SpotlightInnerAngle="0.5" SpotlightOuterAngle="1.5" SpotlightFalloff="2"/></Lights>
+      <Updates><X Node="0" Time="0 2" Value="0 0.5"/><LightCS Light="1" Time="0 2" Value="false true"/>
+      <UpdateUIChecked UIButton="0" Time="0 2" Value="false true"/></Updates></Scene>` },
+    { name: "v.dat", data: new Uint8Array(new Float32Array([0,0,0,1,0,0,0,1,0]).buffer) },
+    { name: "w.dat", data: new Uint8Array(new Float32Array([1,1,1]).buffer) },
+    { name: "i.dat", data: new Uint8Array(new Uint16Array([0,1,2]).buffer) },
+    { name: "skin.dat", data: new Uint8Array(new Uint16Array([0,1,2]).buffer) }
+  ]);
+  await page.goto(pathToFileURL(join(root, "dist/examples/three-render-smoke-standalone.html")).href + "?renderer=webgl");
+  await page.locator("#demo3d-file").setInputFiles({ name: "skin.raw3d", mimeType: "application/zip", buffer: Buffer.from(fixture) });
+  await page.waitForFunction(() => window.__demo3dRenderResult?.status === "rendered");
+  await expect(page.locator('[data-native-button="0"]')).toHaveAttribute("aria-pressed", "false");
+  await page.locator("#animation-time").fill("2");
+  await expect(page.locator('[data-native-button="0"]')).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#animation-time").fill("0");
+  expect(errors.filter(error => /shader|program|webgl|error/i.test(error))).toEqual([]);
+});
+
 test("switches an already rendered scene to the enhanced mode", async ({ page }) => {
   const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
   await page.goto(`${baseUrl}/examples/three-render-smoke.html`);

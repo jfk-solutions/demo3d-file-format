@@ -222,6 +222,12 @@
         Better render
       </label>
       <output id="status">Choose a .demo3d or .raw3d file.</output>
+      <span id="animation-controls" hidden>
+        <button id="animation-play" type="button">Play</button>
+        <input id="animation-time" type="range" min="0" max="0" step="0.01" value="0" aria-label="Animation time" />
+        <output id="animation-label">0.00 s</output>
+      </span>
+      <span id="native-ui" hidden aria-label="Recorded Demo3D buttons"></span>
     </header>
     <main id="viewport-shell">
       <canvas id="viewport"></canvas>
@@ -248,7 +254,7 @@
         applyDemo3DThreeRenderMode,
         createDemo3DThreeGroup,
         createDemo3DThreeRenderer,
-        createRaw3DThreeGroup
+        createRaw3DThreePlayback
       } from "../dist/three/index.js";
 
       const input = document.querySelector("#demo3d-file");
@@ -267,6 +273,38 @@
 
       window.__demo3dRenderResult = { status: "idle" };
       let currentRender = null;
+      const animationControls = document.querySelector("#animation-controls");
+      const animationPlay = document.querySelector("#animation-play");
+      const animationTime = document.querySelector("#animation-time");
+      const animationLabel = document.querySelector("#animation-label");
+      const nativeUI = document.querySelector("#native-ui");
+      function updateNativeUI(playback) {
+        nativeUI.replaceChildren();
+        const states = playback?.state.buttons;
+        nativeUI.hidden = !states?.size;
+        for (const [index, state] of states ?? []) {
+          const button = document.createElement("button");
+          button.textContent = state.name || `Button ${index}`;button.hidden = !state.visible;
+          button.disabled = true;button.dataset.nativeButton = String(index);
+          button.setAttribute("aria-pressed", String(state.checked));
+          nativeUI.append(button);
+        }
+      }
+      animationPlay.addEventListener("click", () => {
+        if (!currentRender?.playback) return;
+        if (Number(animationTime.value) >= currentRender.playback.duration) animationTime.value = "0";
+        currentRender.playing = !currentRender.playing;
+        currentRender.lastFrame = undefined;
+        animationPlay.textContent = currentRender.playing ? "Pause" : "Play";
+      });
+      animationTime.addEventListener("input", () => {
+        if (!currentRender?.playback) return;
+        currentRender.playback.seek(Number(animationTime.value));
+        updateNativeUI(currentRender.playback);
+        applyLayerVisibility(currentRender.group, currentRender.layerState);
+        animationLabel.value = `${Number(animationTime.value).toFixed(2)} s`;
+        currentRender.renderer.render(currentRender.scene, currentRender.camera);
+      });
       const rendererMode = new URL(window.location.href).searchParams.get("renderer");
 
       fitMain.addEventListener("click", () => fitCurrentScene("main"));
@@ -301,7 +339,7 @@
           disposeCurrentRender();
           const selected = await createDemo3DThreeRenderer({
             canvas,
-            preferWebGPU: rendererMode !== "webgl",
+            preferWebGPU: rendererMode !== "webgl" && !(isRaw3D && parsed.model.lights.some(light => /^(point|spot|1|2)$/i.test(light.type))),
             antialias: true,
             preserveDrawingBuffer: true,
             powerPreference: "high-performance"
@@ -309,8 +347,9 @@
           const THREE = selected.three;
 
           status.value = "Creating Three objects...";
+          const playback = isRaw3D ? await createRaw3DThreePlayback(parsed, { three: THREE }) : null;
           const group = isRaw3D
-            ? await createRaw3DThreeGroup(parsed, { three: THREE })
+            ? playback.group
             : await createDemo3DThreeGroup(parsed, {
                 three: THREE,
                 renderProceduralBelts: true,
@@ -369,8 +408,27 @@
             scene,
             three: THREE,
             views,
-            layerState
+            layerState,
+            playback,
+            playing: false,
+            lastFrame: undefined
           };
+          animationControls.hidden = !playback?.duration;
+          animationTime.max = String(playback?.duration ?? 0);animationTime.value = "0";
+          animationLabel.value = "0.00 s";animationPlay.textContent = "Play";
+          updateNativeUI(playback);
+          if (playback?.duration) renderer.setAnimationLoop(now => {
+            const active = currentRender;
+            if (!active?.playing) return;
+            const delta = active.lastFrame === undefined ? 0 : (now-active.lastFrame)/1000;
+            active.lastFrame = now;
+            const time = Math.min(playback.duration, Number(animationTime.value)+delta);
+            playback.seek(time);animationTime.value = String(time);animationLabel.value = `${time.toFixed(2)} s`;
+            updateNativeUI(playback);
+            applyLayerVisibility(group, layerState);
+            renderer.render(scene, camera);
+            if (time >= playback.duration) { active.playing = false;animationPlay.textContent = "Play"; }
+          });
           fitMain.disabled = false;
           fitAll.disabled = false;
           topView.disabled = false;
@@ -400,7 +458,8 @@
           status.value = isRaw3D
             ? `Rendered RAW3D in ${presentation.mode} mode with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ` +
               `${stats.meshes} mesh instances from ${stats.geometries} geometries, ` +
-              `${stats.nodes} nodes, ${stats.materials} materials, ${stats.textures} textures.`
+              `${stats.nodes} nodes, ${stats.materials} materials, ${stats.textures} textures.` +
+              (playback.animation.warnings.length ? ` Unsupported animation: ${playback.animation.warnings.map(warning => warning.message).join(" ")}` : "")
             : `Rendered in ${presentation.mode} mode with ${selected.backend === "webgpu" ? "WebGPU" : "WebGL"}: ${stats.meshes} meshes ` +
               `(${stats.serializedRenderables} placed renderables, ` +
               `${stats.proceduralBelts} belts, ${stats.proceduralRacks} racks, ` +
@@ -762,7 +821,7 @@
           if (object.isMesh || object.isLine || object.isPoints || object.isSprite) {
             const demoVisible = nextDemoLayer === undefined || layerState.visibility.get(nextDemoLayer) !== false;
             const rawVisible = nextRawLayer === undefined || layerState.visibility.get(nextRawLayer) !== false;
-            object.visible = demoVisible && rawVisible;
+            object.visible = demoVisible && rawVisible && object.userData.raw3d?.sourceVisible !== false;
           }
           for (const child of object.children) visit(child, nextDemoLayer, nextRawLayer);
         };
@@ -910,8 +969,12 @@
         }
         currentRender.controls.dispose();
         currentRender.presentation.dispose();
+        currentRender.renderer.setAnimationLoop(null);
+        currentRender.playback?.dispose();
         currentRender.renderer.dispose();
         currentRender = null;
+        animationControls.hidden = true;
+        nativeUI.hidden = true;nativeUI.replaceChildren();
         fitMain.disabled = true;
         fitAll.disabled = true;
         topView.disabled = true;
