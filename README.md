@@ -58,6 +58,143 @@ submeshes, and shadow flags.
 
 Runtime code has no production dependencies and uses browser APIs only. ZIP method `8` entries are decompressed with `DecompressionStream("deflate-raw")`.
 
+## RAW3D animation without a renderer
+
+The root package has no Three.js dependency. It reads animation channels and
+samples native node state independently of any renderer, UI, or playback clock:
+
+```ts
+import { parseRaw3D } from "@jfk-solutions/demo3d-file-format";
+
+const parsed = await parseRaw3D(await file.arrayBuffer());
+const animation = parsed.model.animation; // Lazy, cached typed Updates parser.
+console.log(animation.duration, animation.tracks, animation.warnings);
+const states = animation.sample(1.25); // Absolute simulation seconds.
+const node = animation.sampleNode(0, 1.25);
+console.log(node.location, node.quaternion, node.layerIndex);
+```
+
+Supported tracks include position, rotation, scale, own-geometry visibility,
+deletion, parent, mesh, layer, interaction mode, highlight, optimization metadata,
+and material diffuse ARGB, texture offsets/scales, reflectivity, transparency,
+luminosity, normal scale, and point size. Unknown tracks remain available through
+their original XML and produce warnings; their timestamps still contribute to
+the clip duration. Reading metadata does not execute its native behavior.
+Invalid supported tracks fail explicitly. Duplicate key times select the last
+value, and seeking before a first key restores the node's initial state.
+
+`Raw3DInterpolationMode` matches the Emulate3D 2026 enum: `Default=0`, `None=1`,
+`Linear=2`, `DualQuaternion=3`. `None` holds the previous key; `Linear` interpolates
+numeric channels, with shortest-path angle interpolation. This library treats
+`Default` as linear. Discrete properties and ARGB colors switch at key times.
+
+`DualQuaternion` couples position and orientation using normalized dual-quaternion
+linear blending (DLB). Scale stays separate. `quaternion` and `rotation` describe
+the same sampled orientation in native coordinates. Transform keys are evaluated
+on the union of the node's position/rotation key times. This original implementation
+is derived from the mathematical representation and normalization in
+[Kavan et al., Dual Quaternions for Rigid Transformation Blending (2006)](https://users.cs.utah.edu/~ladislav/kavan06dual/kavan06dual.pdf).
+DLB follows a rigid screw path but is not constant-speed ScLERP. Exact parity
+with Demo3D's interpolation variant/default policy has not yet been established.
+No vendor or paper implementation code is copied.
+
+Native node visibility, interpolation mode, highlight, user data, owner,
+decal/billboard flags, material luminosity/offsets/point size, and scene floor,
+lighting, ambient color and quality properties have typed accessors. Unknown XML
+is still retained; these accessors do not imply full native shader, billboard,
+decal, floor, interaction, or scripting behavior.
+
+### Optional Three.js playback
+
+Only the `/three` entry point binds the sampled state to Three.js objects:
+
+```ts
+import { createRaw3DThreePlayback } from "@jfk-solutions/demo3d-file-format/three";
+
+const playback = await createRaw3DThreePlayback(parsed, { three: THREE });
+scene.add(playback.group);
+playback.seek(1.25);
+renderer.render(scene, camera);
+// The application owns its animation clock, play/pause, speed and looping.
+scene.remove(playback.group);
+playback.dispose();
+```
+
+The binding applies transforms, visibility, deletion, parenting, mesh swaps,
+layer-material fallback, and supported material changes. It preserves explicit
+node materials when a layer changes and isolates animated materials between
+nodes. Structural groups stay enabled when only their own geometry is hidden.
+Retired mesh samples are released, and `dispose()` releases owned GPU resources.
+Playback does not run simulation scripts, physics, or PLC connections. Both
+native bone/weight buffers and baked deforming mesh updates are supported.
+
+The demo and generated standalone viewer offer Play/Pause and an absolute-time
+slider for animated RAW3D files. Embedding the original RAW3D retains animation;
+the source-protected Three.js snapshot export remains a static snapshot.
+
+### Native effects, surfaces and skinning
+
+Use `animation.sampleFrame(time)` for a complete renderer-independent frame:
+`nodes`, `lights`, `buttons`, and `scene`. The same current frame is available as
+`playback.state` after `seek()`. Extended tracks and original XML are exposed by
+`animation.effects.tracks`.
+
+- Material `Texture`, `NormalMap`/`NormalTexture` references switch discretely,
+  including clearing a texture with a negative index. Referenced archive textures
+  are preloaded even when they are only used by later animation keys. Color and
+  normal textures are isolated per animated node and restored on backward seeks.
+- Native light channels include `LightType`, `LightEnabled`, `LightMaterial`,
+  `LightAR`, `LightAC`, `LightAL`, `LightAQ`, `LightSF`, `LightSIA`, `LightSOA`, and
+  `LightCS`. Range, constant/linear/quadratic attenuation, total inner/outer cone
+  angles, falloff and shadow flags are applied. WebGL material hooks implement
+  the distance/cone equations described in [Microsoft's Direct3D lighting
+  documentation](https://learn.microsoft.com/en-us/windows/win32/direct3d9/attenuation-and-spotlight-factor).
+  `evaluateRaw3DLightAttenuation()` exposes the same calculation without Three.js.
+  Shadow rendering still requires the host renderer's shadow map to be enabled.
+- `SceneShowDefaultFloor`, `SceneAllowTeleportOnDefaultFloor`,
+  `SceneUseDefaultLighting`, and `ALR`/`ALG`/`ALB` update the sampled scene.
+  The Three binding provides ambient/default light and a finite floor preview on
+  the recorded plane. Teleport permission is metadata; browser navigation is a
+  host concern. Host-added lighting remains under host control.
+- Native button visibility and checked-state channels are sampled and displayed
+  by the demo. Their original native serializer names `UpdateUIVisible` and
+  `UpdateUIChecked`, as well as `UIVisible`/`UIChecked`, are accepted. Displayed
+  buttons are read-only; the library does not execute their model actions.
+- Unambiguous `UserData`/`ClientOwner` string keys are sampled as metadata. The
+  native serializer joins string arrays with spaces without escaping boundaries.
+  A single key may contain spaces; multi-key values with ambiguous boundaries
+  remain in XML with `RAW3D_STRING_KEYS_AMBIGUOUS` instead of being guessed.
+- The native `Default`, `FlatText`, and `PointCloud` material shader modes map to
+  lit, unlit, and vertex-colored point rendering. Packed ARGB/byte/short vertex
+  attributes retain their native strides. RAW3D material `A` is opacity; the
+  public `transparency` property is its complement. This corrects older builds
+  which inverted partially transparent native materials.
+- Billboards orient their own drawable toward the render camera while leaving
+  the node hierarchy intact. Decal flags apply depth bias and suppress depth
+  writes on the provided surface geometry; no projection onto an unrelated mesh
+  is invented.
+- Mesh `Bones` expose driving scene-node references, bind offsets and native
+  skin index/weight buffer references. `decodeRaw3DSkinInfluences()` validates and
+  normalizes weights without a renderer. The Three adapter constructs GPU
+  `SkinnedMesh`/`Skeleton` bindings for up to four influences per vertex. Larger
+  influence sets use CPU skinning with positions, normals and tangents; no
+  weights are discarded. Unweighted vertices retain their mesh position.
+
+Native channel names, bone fields and shader enums have a checked-in fixture
+generated by the installed Emulate3D 2026 SDK serializer. To regenerate it on
+Windows, run `./scripts/generate-native-feature-fixture.ps1`; other platforms can
+run the tests using the existing fixture without that proprietary SDK.
+Synthetic rigs exercise GPU/CPU deformation, bind offsets and reversible seeks.
+Comparison against a captured native skinned person remains a separate parity
+check; the current Bauhaus recording contains baked human geometry.
+
+Exact native lighting hooks require WebGL; WebGPU retains Three.js's standard
+attenuation and reports `RAW3D_LIGHT_BACKEND_APPROXIMATION`. The demo selects
+WebGL for RAW3D point/spot lights. Native relief/parallax depth remains metadata
+with an explicit warning, and live streamed texture images cannot be recovered
+from an offline archive that does not contain them. These limitations do not
+prevent ordinary normal maps, archived texture animation or skeletal playback.
+
 The default single-pass XML parser builds the Demo3D object tree directly, avoiding the time and memory cost of an intermediate browser DOM. For unusual XML inputs, callers can opt into the browser parser or inject another DOM implementation:
 
 ```ts

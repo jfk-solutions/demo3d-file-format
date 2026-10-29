@@ -4,6 +4,7 @@ import { parseDemo3DXmlFast } from "./fast-xml.js";
 import { Demo3DResource } from "./model.js";
 import { defaultParseXml, type Demo3DXmlElement, type ParseXmlDocument, xmlDocumentToElement } from "./xml.js";
 import { parseZip, type ZipEntry, type ZipEntryInfo } from "./zip.js";
+import { Raw3DAnimation, Raw3DInterpolationMode } from "./raw3d-animation.js";
 
 export interface ParseRaw3DOptions {
   readonly parseXml?: ParseXmlDocument;
@@ -19,6 +20,14 @@ export class Raw3DView {
 }
 
 export class Raw3DNode {
+  get visible(): boolean { return booleanAttribute(this.xml, "Visible", true); }
+  get interpolationMode(): Raw3DInterpolationMode { return numberAttribute(this.xml, "InterpolationMode", 0); }
+  get highlight(): number { return numberAttribute(this.xml, "Highlight", -1); }
+  get hasBeenOptimized(): boolean { return booleanAttribute(this.xml, "HasBeenOptimized", false); }
+  get userData(): string | undefined { return attribute(this.xml, "UserData"); }
+  get clientOwner(): string | undefined { return attribute(this.xml, "ClientOwner"); }
+  get isDecal(): boolean { return booleanAttribute(this.xml, "IsDecal", false); }
+  get isBillboard(): boolean { return booleanAttribute(this.xml, "IsBillboard", false); }
   constructor(
     public readonly index: number,
     public readonly name: string,
@@ -46,6 +55,12 @@ export class Raw3DLayer {
 }
 
 export class Raw3DMaterial {
+  get luminosity(): number { return numberAttribute(this.xml, "Luminosity", 0); }
+  get offsetU(): number { return numberAttribute(this.xml, "U", 0); }
+  get offsetV(): number { return numberAttribute(this.xml, "V", 0); }
+  get pointSize(): number { return numberAttribute(this.xml, "PointSize", 1); }
+  get normalDepth(): number { return numberAttribute(this.xml, "NormalDepth", 0); }
+  get shader(): string { return attribute(this.xml, "Shader") ?? "Default"; }
   constructor(
     public readonly red: number,
     public readonly green: number,
@@ -83,6 +98,12 @@ export class Raw3DText {
 }
 
 export class Raw3DLight {
+  get index(): number | undefined { return integerAttribute(this.xml, "Index"); }
+  get attenuationRange(): number { return numberAttribute(this.xml, "AttenuationRange", 0); }
+  get spotlightFalloff(): number { return numberAttribute(this.xml, "SpotlightFalloff", 0); }
+  get spotlightInnerAngle(): number { return numberAttribute(this.xml, "SpotlightInnerAngle", 0); }
+  get spotlightOuterAngle(): number { return numberAttribute(this.xml, "SpotlightOuterAngle", 0); }
+  get castsShadows(): boolean { return booleanAttribute(this.xml, "CastsShadows", false); }
   constructor(
     public readonly nodeIndex: number | undefined,
     public readonly materialIndex: number | undefined,
@@ -124,7 +145,27 @@ export class Raw3DIndexBuffer {
   ) {}
 }
 
+export class Raw3DBone {
+  constructor(public readonly xml: Demo3DXmlElement) {}
+  get name(): string { return attribute(this.xml, "Name") ?? ""; }
+  /** Scene node driving this bone; -1 denotes the mesh's coordinate frame. */
+  get parentIndex(): number { return integerAttribute(this.xml, "Parent") ?? -1; }
+  get skinIndexBuffer(): number { return integerAttribute(this.xml, "SkinIndexBuffer") ?? -1; }
+  get skinWeightsVertexBuffer(): number { return integerAttribute(this.xml, "SkinWeightsVertexBuffer") ?? -1; }
+  get location(): readonly number[] { return numberList(attribute(this.xml, "Location"), [0,0,0]); }
+  get rotation(): readonly number[] { return numberList(attribute(this.xml, "Rotation"), [0,0,0]); }
+}
+
+export class Raw3DUIButton {
+  constructor(public readonly xml: Demo3DXmlElement, public readonly index: number) {}
+  get name(): string { return attribute(this.xml, "Name") ?? ""; }
+  get id(): string | undefined { return attribute(this.xml, "Id"); }
+  get visible(): boolean { return booleanAttribute(this.xml, "IsVisible", true); }
+  get checked(): boolean { return booleanAttribute(this.xml, "IsChecked", false); }
+}
+
 export class Raw3DMesh {
+  get bones(): readonly Raw3DBone[] { return (this.xml.child("Bones")?.childrenNamed("Bone") ?? []).map(xml => new Raw3DBone(xml)); }
   constructor(
     public readonly vertexBufferIndex: number,
     public readonly indexBufferIndices: readonly number[],
@@ -134,7 +175,26 @@ export class Raw3DMesh {
   ) {}
 }
 
+export class Raw3DSceneProperties {
+  constructor(public readonly xml: Demo3DXmlElement) {}
+  get showDefaultFloor(): boolean { return booleanAttribute(this.xml, "ShowDefaultFloor", true); }
+  get allowTeleportOnDefaultFloor(): boolean { return booleanAttribute(this.xml, "AllowTeleportOnDefaultFloor", true); }
+  get useDefaultLighting(): boolean { return booleanAttribute(this.xml, "UseDefaultLighting", true); }
+  get ambientLightColor(): readonly number[] { return numberList(attribute(this.xml, "AmbientLightColor")); }
+  get floorOrigin(): readonly number[] { return numberList(attribute(this.xml, "FloorOrigin")); }
+  get floorNormal(): readonly number[] { return numberList(attribute(this.xml, "FloorNormal")); }
+  get quality(): number | undefined { return integerAttribute(this.xml, "Quality"); }
+}
+
 export class Raw3DProject {
+  private cachedAnimation?: Raw3DAnimation;
+  /** Parsed on demand; importing the parser never loads a renderer. */
+  get animation(): Raw3DAnimation { return this.cachedAnimation ??= new Raw3DAnimation(this); }
+  get sceneProperties(): Raw3DSceneProperties | undefined {
+    const xml = this.root.child("SceneProperties");
+    return xml ? new Raw3DSceneProperties(xml) : undefined;
+  }
+  get buttons(): readonly Raw3DUIButton[] { return (this.root.child("Buttons")?.childrenNamed("UIButton") ?? []).map((xml, index) => new Raw3DUIButton(xml, integerAttribute(xml, "Index") ?? index)); }
   constructor(
     public readonly root: Demo3DXmlElement,
     public readonly origin: string | undefined,
@@ -252,7 +312,7 @@ async function extractRaw3DProject(
       numberAttribute(element, "R", 0),
       numberAttribute(element, "G", 0),
       numberAttribute(element, "B", 0),
-      numberAttribute(element, "A", 0),
+      1-numberAttribute(element, "A", 1),
       numberAttribute(element, "Reflectivity", 0),
       integerAttribute(element, "Texture"),
       integerAttribute(element, "NormalTexture"),
@@ -304,7 +364,7 @@ async function extractRaw3DProject(
           offset,
           attributeElement
         );
-        offset += componentCount * 4;
+        offset += /^(Color|Byte4|Short2|NormalizedShort2)$/i.test(type) ? 4 : /^(Short4|NormalizedShort4)$/i.test(type) ? 8 : componentCount*4;
         return result;
       });
       return new Raw3DVertexBuffer(
@@ -355,6 +415,8 @@ function integerList(value: string | undefined): number[] {
 }
 
 function vectorComponentCount(type: string): number {
+  if (/^(Color|Byte4|Short4|NormalizedShort4)$/i.test(type)) return 4;
+  if (/^(Short2|NormalizedShort2)$/i.test(type)) return 2;
   if (/^(Single|Float|Double|Half)$/i.test(type)) {
     return 1;
   }

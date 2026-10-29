@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Scene xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Nodes>
+    <Node Index="0" Name="Fixture" />
+  </Nodes>
+  <Buttons>
+    <UIButton Index="0" Name="Run" />
+  </Buttons>
+  <Materials>
+    <Material Luminosity="0.5" NormalDepth="0.1" Shader="FlatText" A="0.2" G="1" />
+  </Materials>
+  <Meshes>
+    <Mesh>
+      <Bones>
+        <Bone Name="Arm" Parent="0" SkinIndexBuffer="1" SkinWeightsVertexBuffer="2" Location="1 2 3" Rotation="0 0 0.5" />
+      </Bones>
+    </Mesh>
+  </Meshes>
+  <Lights>
+    <Light Index="0" Node="0" Material="0" Enabled="true" Type="Spot" AttenuationConstant="1" SpotlightFalloff="2" SpotlightInnerAngle="0.2" SpotlightOuterAngle="0.6" />
+  </Lights>
+  <Updates>
+    <UserData Node="0" Time="0 1" Value="hello world {&quot;message&quot;:&quot;a b&quot;}" />
+    <LightType Light="0" Time="0 1" Value="1 2" />
+    <LightEnabled Light="0" Time="0 1" Value="True False" />
+    <LightAR Light="0" Time="0 1" Value="5 10" />
+    <SceneUseDefaultLighting Time="0 1" Value="True False" />
+    <ALR Time="0 1" Value="0 1" />
+    <Material Name="Texture" Node="0" Time="0 1" Value="0 1" />
+    <LightMaterial Light="0" Time="0 1" Value="FFFFFFFF FFFF0000" />
+    <UpdateUIVisible UIButton="0" Time="0 1" Value="True False" />
+    <UpdateUIChecked UIButton="0" Time="0 1" Value="False True" />
+  </Updates>
+</Scene>
