@@ -9,6 +9,7 @@
         "imports": {
           "three": "../node_modules/three/build/three.module.js",
           "three/webgpu": "../node_modules/three/build/three.webgpu.js",
+          "three/tsl": "../node_modules/three/build/three.tsl.js",
           "three/addons/": "../node_modules/three/examples/jsm/"
         }
       }
@@ -339,7 +340,7 @@
           disposeCurrentRender();
           const selected = await createDemo3DThreeRenderer({
             canvas,
-            preferWebGPU: rendererMode !== "webgl" && !(isRaw3D && parsed.model.lights.some(light => /^(point|spot|1|2)$/i.test(light.type))),
+            preferWebGPU: rendererMode !== "webgl",
             antialias: true,
             preserveDrawingBuffer: true,
             powerPreference: "high-performance"

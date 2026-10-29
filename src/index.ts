@@ -3,6 +3,8 @@ export { Raw3DAnimation, Raw3DInterpolationMode, type Raw3DAnimationTrack, type 
 export { interpolateRaw3DDualQuaternion, raw3DQuaternionFromRotation, raw3DRotationFromQuaternion, type Raw3DRigidTransform, type Raw3DQuaternion, type Raw3DVector3 } from "./rigid-interpolation.js";
 export { Raw3DSceneProperties } from "./raw3d.js";
 export { Raw3DBone, Raw3DUIButton } from "./raw3d.js";
+export { Raw3DStreamableTexture } from "./raw3d.js";
+export type { Raw3DAnimationOptions, Raw3DStringKeyRequest } from "./raw3d-effects.js";
 export { Raw3DEffects, evaluateRaw3DLightAttenuation, type Raw3DEffectState, type Raw3DEffectTrack, type Raw3DLightState, type Raw3DUIState, type Raw3DSceneState } from "./raw3d-effects.js";
 export { decodeRaw3DSkinInfluences, type Raw3DSkinInfluence } from "./raw3d-skinning.js";
 export {

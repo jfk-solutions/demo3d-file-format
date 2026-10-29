@@ -3,6 +3,8 @@ import type { Raw3DEffectState } from "../raw3d-effects.js";
 import type { Raw3DProject } from "../raw3d.js";
 import type { Raw3DThreeModule } from "./raw3d.js";
 import { configureRaw3DLightMaterial } from "./native-lighting.js";
+import { raw3DNodeBackend } from "./backend.js";
+import { configureRaw3DRelief } from "./parallax.js";
 
 const billboardState = new WeakMap<Three.Object3D, { rotation: Three.Quaternion; callback: Three.Object3D["onBeforeRender"] }>();
 
@@ -29,6 +31,8 @@ export function configureRaw3DDrawable(object: Three.Object3D, billboard: boolea
     material.polygonOffset = decal;material.polygonOffsetFactor = decal ? -1 : 0;material.polygonOffsetUnits = decal ? -1 : 0;
     if (decal) material.depthWrite = false;
     configureRaw3DLightMaterial(material, three);
+    configureRaw3DRelief(material, three);
+    raw3DNodeBackend(three)?.configure(material);
   }
 }
 
@@ -44,7 +48,8 @@ export function applyRaw3DThreeEffects(group: Three.Group, frame: Raw3DEffectSta
       const parent = light.parent!;
       const previous = light as Three.DirectionalLight;
       previous.target?.removeFromParent();previous.shadow?.dispose();
-      const replacement = state.type === 1 ? new three.PointLight() : state.type === 2 ? new three.SpotLight() : new three.DirectionalLight();
+      const backend = raw3DNodeBackend(three);
+      const replacement = state.type === 1 ? backend?.point() ?? new three.PointLight() : state.type === 2 ? backend?.spot() ?? new three.SpotLight() : new three.DirectionalLight();
       replacement.userData = light.userData;replacement.name = light.name;parent.remove(light);parent.add(replacement);light = replacement;
     }
     light.visible = state.enabled;

@@ -2,6 +2,7 @@ import type * as Three from "three";
 import type { Raw3DAnimation, Raw3DNodeState } from "../raw3d-animation.js";
 import { bindRaw3DThreeSkin, type Raw3DThreeSkinBinding } from "./skinning.js";
 import { applyRaw3DThreeEffects, configureRaw3DDrawable } from "./effects.js";
+import { raw3DNodeBackend } from "./backend.js";
 import {
   Raw3DMaterial,
   Raw3DMesh,
@@ -10,6 +11,7 @@ import {
   type Raw3DNode,
   type Raw3DTexture
 } from "../raw3d.js";
+import type { Raw3DStreamableTexture } from "../raw3d.js";
 
 export type Raw3DThreeModule = typeof Three;
 
@@ -22,6 +24,10 @@ export interface Raw3DThreeWarning {
 }
 
 export interface Raw3DThreeOptions {
+  /** Returned textures remain caller-owned. Use seekAsync() for time-indexed frames. */
+  readonly resolveStreamTexture?: (request: { readonly index: number; readonly time: number; readonly source?: Raw3DStreamableTexture; readonly signal: AbortSignal }) => Three.Texture | undefined | Promise<Three.Texture | undefined>;
+  /** Packed height channel in normal textures; opaque alpha defaults to a flat top surface. */
+  readonly parallaxHeightChannel?: "r" | "g" | "b" | "a";
   readonly three?: Raw3DThreeModule;
   readonly loadThree?: () => Promise<Raw3DThreeModule>;
   readonly onWarning?: (warning: Raw3DThreeWarning) => void;
@@ -95,9 +101,8 @@ async function buildRaw3DThreeGroup(parsed: Raw3DPackage | Raw3DProject, options
     options.onWarning?.(warning);
   };
   const textures = await loadTextures(project, three, stats, warn);
-  if ("WebGPURenderer" in three && project.lights.some(light => /^(point|spot|1|2)$/i.test(light.type))) warn({ code: "RAW3D_LIGHT_BACKEND_APPROXIMATION", message: "Native attenuation and cone falloff use WebGL shader hooks. WebGPU uses the standard Three.js light approximation; select WebGL for native light coefficients." });
-  for (const material of project.materials) if (material.normalTextureIndex !== undefined && material.normalDepth !== 0) warn({ code: "RAW3D_RELIEF_MAPPING_UNSUPPORTED", message: "Native normal depth is preserved, but parallax/relief shading is not implemented." });
   const materials = project.materials.map((material) => createMaterial(material, textures, three));
+  for (const material of materials) material.userData.raw3DHeightChannel = options.parallaxHeightChannel ?? "a";
   const defaultMaterial = new three.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.8 });
   const geometryCache = new Map<number, Three.BufferGeometry>();
   const objects = new Map<number, Three.Object3D>();
@@ -208,10 +213,10 @@ async function buildRaw3DThreeGroup(parsed: Raw3DPackage | Raw3DProject, options
         light = new three.AmbientLight(color, 1);
         break;
       case "point":
-        light = new three.PointLight(color, 1, 0, 2);
+        light = raw3DNodeBackend(three)?.point() ?? new three.PointLight(color, 1, 0, 2);light.color.copy(color);
         break;
       case "spot":
-        light = new three.SpotLight(color, 1);
+        light = raw3DNodeBackend(three)?.spot() ?? new three.SpotLight(color, 1);light.color.copy(color);
         break;
       default: {
         const directional = new three.DirectionalLight(color, 1);
@@ -284,6 +289,8 @@ export interface Raw3DThreePlayback {
   readonly state: ReturnType<Raw3DAnimation["sampleFrame"]>;
   /** Apply an absolute simulation time. The host owns play/pause and its clock. */
   seek(time: number): void;
+  /** Resolve external frames before applying time; false means a newer seek superseded this one. */
+  seekAsync(time: number): Promise<boolean>;
   /** Release this playback's resources. The caller may then remove the group. */
   dispose(): void;
 }
@@ -301,7 +308,10 @@ export async function createRaw3DThreePlayback(
     const item = { code: warning.code, message: warning.message };
     group.userData.raw3d.warnings.push(item);options.onWarning?.(item);
   }
-  const variants = new Map<string, { base: Three.Material; material: Three.Material; map?: Three.Texture; normalMap?: Three.Texture }>();
+  const variants = new Map<string, { base: Three.Material; material: Three.Material; map?: Three.Texture; normalMap?: Three.Texture; mapSource?: Three.Texture; streamRevision?: number }>();
+  const archivedStreams = new Map([...resources.textures].filter(([key]) => key.startsWith("stream:")));
+  const streamRevisions = new Map<number, number>();
+  const streamWarnings = new Set<number>();
   const ownedMaterials = new Set<Three.Material>([...materials, defaultMaterial]);
   const ownedTextures = new Set(resources.textures.values());
   const capture = () => group.traverse(object => {
@@ -320,18 +330,36 @@ export async function createRaw3DThreePlayback(
       const index = node.materialIndices[slot] ?? node.materialIndices[0] ?? layerMaterial;
       const base = (index === undefined ? defaultMaterial : materials[index] ?? defaultMaterial) as Three.MeshStandardMaterial;
       const values = state.materialProperties[slot] ?? {};
-      const key = `${node.index}:${slot}:${index ?? -1}:${values.Texture ?? "base"}:${values.NormalMap ?? values.NormalTexture ?? "base"}`;
+      const streamIndex = values.StreamableTexture ?? (index === undefined ? -1 : project.materials[index]?.streamableTextureIndex ?? -1);
+      const ordinaryMap = values.Texture === undefined ? base.map : values.Texture < 0 ? null : resources.textures.get(`${values.Texture}:color`);
+      const streamMap = streamIndex < 0 ? undefined : resources.textures.get(`stream:${streamIndex}:color`);
+      const mapSource = streamMap ?? ordinaryMap;
+      if (streamIndex >= 0 && !streamMap && !streamWarnings.has(streamIndex)) {
+        streamWarnings.add(streamIndex);
+        const warning = { code: "RAW3D_STREAM_TEXTURE_UNAVAILABLE", message: `Streamable texture ${streamIndex} has no archived image or resolved external frame.` };
+        group.userData.raw3d.warnings.push(warning);options.onWarning?.(warning);
+      }
+      const key = `${node.index}:${slot}:${index ?? -1}:${values.Texture ?? "base"}:${values.NormalMap ?? values.NormalTexture ?? "base"}:stream:${streamIndex}`;
       let entry = variants.get(key);
       if (!entry) {
         const material = base.clone();
-        const mapSource = values.Texture === undefined ? base.map : values.Texture < 0 ? null : resources.textures.get(`${values.Texture}:color`);
         const normalIndex = values.NormalMap ?? values.NormalTexture;
         const normalSource = normalIndex === undefined ? base.normalMap : normalIndex < 0 ? null : resources.textures.get(`${normalIndex}:normal`);
         if ((values.Texture !== undefined && values.Texture >= 0 && !mapSource) || (normalIndex !== undefined && normalIndex >= 0 && !normalSource)) throw new Error("An animated RAW3D texture resource could not be loaded.");
-        entry = { base, material, map: mapSource?.clone(), normalMap: normalSource?.clone() };
+        entry = { base, material, map: mapSource?.clone(), normalMap: normalSource?.clone(), mapSource: mapSource ?? undefined };
         variants.set(key, entry);ownedMaterials.add(material);
         if (entry.map) ownedTextures.add(entry.map);
         if (entry.normalMap) ownedTextures.add(entry.normalMap);
+      }
+      if (entry.mapSource !== (mapSource ?? undefined)) {
+        if (entry.map) { entry.map.dispose();ownedTextures.delete(entry.map); }
+        entry.map = mapSource?.clone();entry.mapSource = mapSource ?? undefined;
+        if (entry.map) ownedTextures.add(entry.map);
+        entry.material.needsUpdate = true;
+      }
+      if (streamIndex >= 0 && entry.streamRevision !== streamRevisions.get(streamIndex)) {
+        if (entry.map) entry.map.needsUpdate = true;
+        entry.streamRevision = streamRevisions.get(streamIndex);
       }
       const material = entry.material as Three.MeshStandardMaterial;
       const wasTransparent = material.transparent;
@@ -361,7 +389,8 @@ export async function createRaw3DThreePlayback(
       return material;
     });
   };
-  const seek = (time: number) => {
+  let seekRevision = 0, pendingFrames: AbortController | undefined;
+  const apply = (time: number) => {
     if (disposed) throw new Error("RAW3D playback has been disposed.");
     frame = animation.sampleFrame(time);
     const states = frame.nodes;
@@ -435,9 +464,38 @@ export async function createRaw3DThreePlayback(
     for (const binding of skinBindings.values()) binding.update();
     applyRaw3DThreeEffects(group, frame, project, three);
   };
+  const seek = (time: number) => { seekRevision++;pendingFrames?.abort();apply(time); };
+  const seekAsync = async (time: number): Promise<boolean> => {
+    if (disposed) throw new Error("RAW3D playback has been disposed.");
+    const next = animation.sampleFrame(time), revision = ++seekRevision;
+    pendingFrames?.abort();const controller = new AbortController();pendingFrames = controller;
+    const requested = new Set<number>();
+    for (const node of project.nodes) {
+      const state = next.nodes.get(node.index)!;
+      const mesh = state.meshIndex === undefined ? undefined : project.meshes[state.meshIndex];
+      for (let slot = 0; slot < Math.max(1, mesh?.indexBufferIndices.length ?? 1); slot++) {
+        const materialIndex = node.materialIndices[slot] ?? node.materialIndices[0] ?? (state.layerIndex === undefined ? undefined : project.layers[state.layerIndex]?.materialIndex);
+        const stream = state.materialProperties[slot]?.StreamableTexture ?? (materialIndex === undefined ? -1 : project.materials[materialIndex]?.streamableTextureIndex ?? -1);
+        if (stream >= 0) requested.add(stream);
+      }
+    }
+    try {
+      const resolved = options.resolveStreamTexture ? await Promise.all([...requested].map(async index => [index, await options.resolveStreamTexture!({ index, time: Math.max(0,time), source: project.streamableTextures.find(source => source.index === index), signal: controller.signal })] as const)) : [];
+      if (disposed || revision !== seekRevision) return false;
+      for (const [index, texture] of resolved) {
+        if (texture !== undefined && !texture.isTexture) throw new Error("A stream texture resolver must return a Three.js texture or undefined.");
+        const key = `stream:${index}:color`, selected = texture ?? archivedStreams.get(key);
+        if (selected) resources.textures.set(key, selected);else resources.textures.delete(key);
+        streamRevisions.set(index, (streamRevisions.get(index) ?? 0)+1);
+      }
+      apply(time);return true;
+    } catch (error) { if (disposed || revision !== seekRevision) return false;throw error; }
+    finally { if (revision === seekRevision) pendingFrames = undefined; }
+  };
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    seekRevision++;pendingFrames?.abort();
     for (const binding of skinBindings.values()) binding.dispose();skinBindings.clear();
     for (const geometry of geometryCache.values()) geometry.dispose();
     group.traverse(object => { if (object.userData.raw3d?.kind === "scene-floor") (object as Three.Mesh).geometry.dispose(); });
@@ -451,8 +509,8 @@ export async function createRaw3DThreePlayback(
     for (const texture of ownedTextures) texture.dispose();
     group.clear();variants.clear();geometryCache.clear();
   };
-  try { seek(0); } catch (error) { dispose();throw error; }
-  return { group, animation, duration: animation.duration, get state() { return frame; }, seek, dispose };
+  try { await seekAsync(0); } catch (error) { dispose();throw error; }
+  return { group, animation, duration: animation.duration, get state() { return frame; }, seek, seekAsync, dispose };
 }
 
 export function decodeRaw3DThreeGeometry(
@@ -708,6 +766,7 @@ async function loadTextures(
   warn: (warning: Raw3DThreeWarning) => void
 ): Promise<Map<string, Three.Texture>> {
   const wanted = new Map<string, { texture: Raw3DTexture; color: boolean }>();
+  for (const stream of project.streamableTextures) if (stream.data) wanted.set(`stream:${stream.index}:color`, { texture: stream, color: true });
   for (const material of project.materials) {
     if (material.textureIndex !== undefined && project.textures[material.textureIndex]) {
       wanted.set(`${material.textureIndex}:color`, { texture: project.textures[material.textureIndex]!, color: true });
@@ -798,13 +857,13 @@ function createMaterial(
   let result: Three.MeshStandardMaterial | Three.MeshBasicMaterial;
   switch (source.shader.toLowerCase()) {
     case "flattext": case "2": result = new three.MeshBasicMaterial({ color: parameters.color, map: map ?? null, opacity, transparent: opacity < 1 || !!map, depthWrite: opacity >= 1, side: three.DoubleSide });break;
-    case "default": case "0": case "pointcloud": case "1": result = new three.MeshStandardMaterial(parameters);break;
+    case "default": case "0": case "pointcloud": case "1": result = raw3DNodeBackend(three)?.standard(parameters) ?? new three.MeshStandardMaterial(parameters);break;
     default: throw new Error(`Unsupported RAW3D material shader ${source.shader}.`);
   }
   result.userData.raw3dShader = source.shader;
   result.userData.raw3dPointSize = source.pointSize;
   result.userData.raw3dNormalDepth = source.normalDepth;
-  if (result instanceof three.MeshStandardMaterial) result.emissive.copy(result.color).multiplyScalar(source.luminosity);
+  if ("emissive" in result) result.emissive.copy(result.color).multiplyScalar(source.luminosity);
   return result;
 }
 
