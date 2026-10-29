@@ -146,7 +146,7 @@ Use `animation.sampleFrame(time)` for a complete renderer-independent frame:
 - Native light channels include `LightType`, `LightEnabled`, `LightMaterial`,
   `LightAR`, `LightAC`, `LightAL`, `LightAQ`, `LightSF`, `LightSIA`, `LightSOA`, and
   `LightCS`. Range, constant/linear/quadratic attenuation, total inner/outer cone
-  angles, falloff and shadow flags are applied. WebGL material hooks implement
+  angles, falloff and shadow flags are applied. WebGL hooks and the TSL node backend implement
   the distance/cone equations described in [Microsoft's Direct3D lighting
   documentation](https://learn.microsoft.com/en-us/windows/win32/direct3d9/attenuation-and-spotlight-factor).
   `evaluateRaw3DLightAttenuation()` exposes the same calculation without Three.js.
@@ -188,12 +188,86 @@ Synthetic rigs exercise GPU/CPU deformation, bind offsets and reversible seeks.
 Comparison against a captured native skinned person remains a separate parity
 check; the current Bauhaus recording contains baked human geometry.
 
-Exact native lighting hooks require WebGL; WebGPU retains Three.js's standard
-attenuation and reports `RAW3D_LIGHT_BACKEND_APPROXIMATION`. The demo selects
-WebGL for RAW3D point/spot lights. Native relief/parallax depth remains metadata
-with an explicit warning, and live streamed texture images cannot be recovered
-from an offline archive that does not contain them. These limitations do not
-prevent ordinary normal maps, archived texture animation or skeletal playback.
+### Lossless strings and external resources
+
+Native string arrays lose their boundaries when values containing spaces are
+joined into a single attribute. Supply authoritative keys from a sidecar through
+the renderer-independent parser option:
+
+```ts
+const parsed = await parseRaw3D(bytes, {
+  resolveStringKeys: ({ nodeIndex, property, times, encoded, xml }) => {
+    return sidecar.lookup(nodeIndex, property, times); // string[] or undefined
+  },
+  resolveResource: async path => resources.get(path) // Uint8Array or undefined
+});
+```
+
+The resolver runs for string tracks and must return one string per timestamp,
+including empty values. Incorrect lengths/types fail explicitly. Archive entries
+take precedence over `resolveResource`; no filesystem/network request is made
+automatically. A library-side extension also accepts `<Values><Value>...</Value>
+...</Values>` children, or `ValueEncoding="json"` with a JSON array in `Value`.
+These extensions are explicit conventions for this reader, not a claim that the
+native serializer emits them. The original XML stays available. Missing
+authoritative data still produces `RAW3D_STRING_KEYS_AMBIGUOUS`; impossible
+boundaries are not guessed.
+
+`parsed.model.streamableTextures` exposes native index, ID, name, dimensions,
+path and any archived/resolved image bytes. Material `StreamableTexture` selects
+the corresponding image. For video, a live camera or a recorded frame sequence,
+provide Three.js textures and use asynchronous seeking:
+
+```ts
+const playback = await createRaw3DThreePlayback(parsed, {
+  three: THREE,
+  resolveStreamTexture: async ({ index, time, source, signal }) => {
+    return frames.textureAt(index, time, signal); // Texture or undefined
+  }
+});
+await playback.seekAsync(2.5); // false if superseded by a newer seek
+```
+
+Resolvers receive clip time, stream metadata and an abort signal. A newer seek,
+synchronous seek, or disposal cancels pending requests; stale responses never
+replace newer imagery. Returned textures remain caller-owned. The player owns
+only its clones. Returning `undefined` restores the archived fallback or clears
+the unavailable frame and reports a warning. A synchronous `seek()` retains the
+currently resolved stream image; use `seekAsync()` for frame-accurate seeking.
+Missing video frames still need an external source; a file reader cannot
+reconstruct imagery that was never recorded. No URL or camera is opened without
+an explicit host resolver.
+
+### Relief shading and the node renderer
+
+`NormalDepth` drives layered parallax/relief UV ray marching with 32 layers and
+five binary refinements in both the WebGL shader and TSL material paths. Heights
+are read from the normal image's alpha channel by default; select a different
+packed channel with `parallaxHeightChannel: "r" | "g" | "b" | "a"`. Opaque alpha
+represents a flat top surface. Color and normal samples share the relief offset,
+and animated depth updates are reversible. Depth controls texture-coordinate
+displacement; this does not add geometry or alter silhouettes. A normal image
+without height data cannot supply missing surface depth by itself. The height
+packing and scale may need adjustment for a particular native export.
+
+The renderer factory automatically registers native point/spot light nodes and
+node materials with `WebGPURenderer`. Native attenuation, range and cone falloff
+are calculated through TSL, which supports both the WebGPU and node-renderer
+WebGL backends. Existing lights and materials outside the native binding keep
+their standard behavior. For a manually constructed renderer, configure it
+before creating RAW3D groups:
+
+```ts
+import * as THREE from "three/webgpu";
+import { configureRaw3DWebGPURenderer } from "@jfk-solutions/demo3d-file-format/three";
+await configureRaw3DWebGPURenderer(renderer, THREE);
+```
+
+Unbundled hosts must map `three/tsl` alongside `three/webgpu` to their matching
+Three.js release. Node rendering code is loaded on demand; importing the parser
+still loads no renderer. Browser tests compare visible relief and attenuation
+changes plus backward restoration under WebGL and the TSL WebGL backend. The
+hardware WebGPU case runs only when an adapter is available.
 
 The default single-pass XML parser builds the Demo3D object tree directly, avoiding the time and memory cost of an intermediate browser DOM. For unusual XML inputs, callers can opt into the browser parser or inject another DOM implementation:
 

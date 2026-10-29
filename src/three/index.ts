@@ -1,4 +1,5 @@
 import type * as Three from "three";
+export { configureRaw3DWebGPURenderer } from "./backend.js";
 import {
   Demo3DConveyorSideProperties,
   Demo3DDimensionAspect,

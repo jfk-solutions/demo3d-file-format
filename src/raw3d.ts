@@ -5,8 +5,11 @@ import { Demo3DResource } from "./model.js";
 import { defaultParseXml, type Demo3DXmlElement, type ParseXmlDocument, xmlDocumentToElement } from "./xml.js";
 import { parseZip, type ZipEntry, type ZipEntryInfo } from "./zip.js";
 import { Raw3DAnimation, Raw3DInterpolationMode } from "./raw3d-animation.js";
+import type { Raw3DAnimationOptions } from "./raw3d-effects.js";
 
-export interface ParseRaw3DOptions {
+export interface ParseRaw3DOptions extends Raw3DAnimationOptions {
+  /** Optional explicit resource loader; archive resources take precedence. No automatic network access. */
+  readonly resolveResource?: (path: string) => Promise<Uint8Array | undefined> | Uint8Array | undefined;
   readonly parseXml?: ParseXmlDocument;
   readonly xmlParser?: "fast" | "dom";
 }
@@ -55,6 +58,7 @@ export class Raw3DLayer {
 }
 
 export class Raw3DMaterial {
+  get streamableTextureIndex(): number { return integerAttribute(this.xml, "StreamableTexture") ?? -1; }
   get luminosity(): number { return numberAttribute(this.xml, "Luminosity", 0); }
   get offsetU(): number { return numberAttribute(this.xml, "U", 0); }
   get offsetV(): number { return numberAttribute(this.xml, "V", 0); }
@@ -82,6 +86,15 @@ export class Raw3DTexture {
     public readonly data: Uint8Array | undefined,
     public readonly xml: Demo3DXmlElement
   ) {}
+}
+
+export class Raw3DStreamableTexture {
+  constructor(public readonly xml: Demo3DXmlElement, public readonly index: number, public readonly data: Uint8Array | undefined = undefined) {}
+  get name(): string { return attribute(this.xml, "Name") ?? ""; }
+  get path(): string { return attribute(this.xml, "Path") ?? ""; }
+  get id(): string | undefined { return attribute(this.xml, "Id"); }
+  get width(): number { return integerAttribute(this.xml, "Width") ?? 0; }
+  get height(): number { return integerAttribute(this.xml, "Height") ?? 0; }
 }
 
 export class Raw3DText {
@@ -207,7 +220,9 @@ export class Raw3DProject {
     public readonly lights: readonly Raw3DLight[],
     public readonly meshes: readonly Raw3DMesh[],
     public readonly vertexBuffers: readonly Raw3DVertexBuffer[],
-    public readonly indexBuffers: readonly Raw3DIndexBuffer[]
+    public readonly indexBuffers: readonly Raw3DIndexBuffer[],
+    public readonly animationOptions: Raw3DAnimationOptions = {},
+    public readonly streamableTextures: readonly Raw3DStreamableTexture[] = []
   ) {}
 }
 
@@ -245,10 +260,11 @@ export async function parseRaw3D(input: Demo3DInput, options: ParseRaw3DOptions 
   }
 
   const loadData = async (path: string): Promise<Uint8Array | undefined> => {
+    if (!path) return undefined;
     const entry = entryByPath.get(path.toLowerCase());
-    return entry ? entry.arrayBuffer() : undefined;
+    return entry ? entry.arrayBuffer() : options.resolveResource?.(path);
   };
-  const model = await extractRaw3DProject(root, loadData);
+  const model = await extractRaw3DProject(root, loadData, options);
   const thumbnailEntry = entryByPath.get("thumbnail.png");
   const aspectsEntry = entryByPath.get("aspects.json");
   const [thumbnail, aspects] = await Promise.all([
@@ -268,11 +284,14 @@ export async function parseRaw3D(input: Demo3DInput, options: ParseRaw3DOptions 
 
 async function extractRaw3DProject(
   root: Demo3DXmlElement,
-  loadData: (path: string) => Promise<Uint8Array | undefined>
+  loadData: (path: string) => Promise<Uint8Array | undefined>,
+  options: ParseRaw3DOptions
 ): Promise<Raw3DProject> {
   const textureElements = root.child("Textures")?.childrenNamed("Texture") ?? [];
   const vertexBufferElements = root.child("VertexBuffers")?.childrenNamed("VertexBuffer") ?? [];
   const indexBufferElements = root.child("IndexBuffers")?.childrenNamed("IndexBuffer") ?? [];
+  const streamElements = root.child("StreamableTextures")?.children ?? [];
+  const streams = await Promise.all(streamElements.map(async (xml, index) => new Raw3DStreamableTexture(xml, integerAttribute(xml, "Index") ?? index, await loadData(attribute(xml, "Path") ?? ""))));
   const [textureData, vertexData, indexData] = await Promise.all([
     Promise.all(textureElements.map((element) => loadData(attribute(element, "Path") ?? ""))),
     Promise.all(vertexBufferElements.map((element) => loadData(attribute(element, "Path") ?? ""))),
@@ -380,7 +399,9 @@ async function extractRaw3DProject(
       attribute(element, "Format") ?? "UInt16",
       indexData[index],
       element
-    ))
+    )),
+    options,
+    streams
   );
 }
 

@@ -1,5 +1,6 @@
 import type * as Three from "three";
 import type * as ThreeWebGPU from "three/webgpu";
+import { configureRaw3DWebGPURenderer } from "./backend.js";
 
 export type Demo3DThreeModule = typeof Three;
 export type Demo3DThreeWebGPUModule = typeof ThreeWebGPU;
@@ -62,6 +63,7 @@ export async function createDemo3DThreeRenderer(
           powerPreference: options.powerPreference
         });
         await renderer.init();
+        if (renderer.library) await configureRaw3DWebGPURenderer(renderer, three);
 
         if (isWebGPUBackend(renderer.backend)) {
           return {

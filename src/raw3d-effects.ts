@@ -24,6 +24,14 @@ export interface Raw3DEffectTrack {
   readonly times: readonly number[]; readonly values: readonly (number | boolean | string)[];
   readonly xml: Demo3DXmlElement;
 }
+export interface Raw3DStringKeyRequest {
+  readonly xml: Demo3DXmlElement; readonly nodeIndex: number; readonly property: string;
+  readonly times: readonly number[]; readonly encoded: string;
+}
+export interface Raw3DAnimationOptions {
+  /** Supply authoritative keys, for example from a sidecar, without guessing native string boundaries. */
+  readonly resolveStringKeys?: (request: Raw3DStringKeyRequest) => readonly string[] | undefined;
+}
 const mappings: Record<string, [Raw3DEffectTrack["target"], string, "number" | "integer" | "boolean" | "string" | "hex"]> = {
   UserData: ["node", "userData", "string"], ClientOwner: ["node", "clientOwner", "string"],
   IsBillboard: ["node", "isBillboard", "boolean"], IsDecal: ["node", "isDecal", "boolean"],
@@ -49,7 +57,7 @@ const tokens = (value: string) => value.trim().split(/\s+/).filter(Boolean);
 export class Raw3DEffects {
   readonly tracks: readonly Raw3DEffectTrack[];
   readonly warnings: readonly Raw3DAnimationWarning[];
-  constructor(private readonly project: Raw3DProject) {
+  constructor(private readonly project: Raw3DProject, options: Raw3DAnimationOptions = {}) {
     const tracks: Raw3DEffectTrack[] = [], warnings: Raw3DAnimationWarning[] = [];
     const targets = {
       node: new Set(project.nodes.map(node => node.index)),
@@ -65,7 +73,16 @@ export class Raw3DEffects {
       const times = tokens(attribute(xml, "Time") ?? "").map(Number);
       if (!times.length || times.some((time, i) => !Number.isFinite(time) || time < 0 || (i > 0 && time < times[i-1]!))) throw new Error(`Invalid RAW3D ${xml.localName} times.`);
       const encoded = attribute(xml, "Value") ?? "";
-      const raw = format === "string" && times.length === 1 ? [encoded] : tokens(encoded);
+      let raw: readonly string[] = format === "string" && times.length === 1 ? [encoded] : tokens(encoded);
+      if (format === "string") {
+        const explicit = xml.child("Values")?.childrenNamed("Value").map(value => value.text);
+        let resolved = explicit ?? options.resolveStringKeys?.({ xml, nodeIndex: index, property: initialProperty, times, encoded });
+        if (attribute(xml, "ValueEncoding") === "json" && !explicit && !resolved) resolved = JSON.parse(encoded) as unknown as readonly string[];
+        if (resolved !== undefined) {
+          if (!Array.isArray(resolved) || resolved.length !== times.length || !resolved.every(value => typeof value === "string")) throw new Error(`Invalid resolved RAW3D ${xml.localName} string keys.`);
+          raw = resolved;
+        }
+      }
       if (format === "string" && raw.length !== times.length) {
         warnings.push({ code: "RAW3D_STRING_KEYS_AMBIGUOUS", message: `RAW3D ${xml.localName} string boundaries cannot be recovered from the native space-separated Value attribute.`, xml });
         continue;

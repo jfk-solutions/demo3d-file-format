@@ -55,7 +55,7 @@ export class Raw3DAnimation {
   private readonly nodes: ReadonlyMap<number, Raw3DProject["nodes"][number]>;
 
   constructor(project: Raw3DProject) {
-    this.effects = new Raw3DEffects(project);
+    this.effects = new Raw3DEffects(project, project.animationOptions);
     this.nodes = new Map(project.nodes.map(node => [node.index, node]));
     const tracks: Raw3DAnimationTrack[] = [], warnings: Raw3DAnimationWarning[] = [];
     let duration = 0;

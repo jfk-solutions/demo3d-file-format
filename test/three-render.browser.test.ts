@@ -107,6 +107,73 @@ test("renders native skinning and light shader parameters while replaying UI sta
   expect(errors.filter(error => /shader|program|webgl|error/i.test(error))).toEqual([]);
 });
 
+for (const backend of ["webgl", "node-webgl", "webgpu"] as const) {
+  test(`renders relief depth and native light attenuation through ${backend}`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+    const vertex = new Float32Array([
+      -1,-1,0, 0,0,1, 0,0, 1,-1,0, 0,0,1, 1,0,
+      1,1,0, 0,0,1, 1,1, -1,1,0, 0,0,1, 0,1
+    ]);
+    const fixture = createZip([
+      { name: "Model.xml", data: `<Scene><SceneProperties ShowDefaultFloor="false" UseDefaultLighting="false" AmbientLightColor="0.15 0.15 0.15"/>
+        <Nodes><Node Index="0" Mesh="0" Materials="0"/><Node Index="1" Location="0 0 3" Rotation="0 3.14159265359 0"/></Nodes>
+        <Materials><Material R="1" G="1" B="1" Texture="1" NormalTexture="0" NormalDepth="0.25"/></Materials>
+        <Textures><Texture Path="normal.png"/><Texture Path="color.png"/></Textures>
+        <Meshes><Mesh VertexBuffer="0" IndexBuffers="0"/></Meshes>
+        <VertexBuffers><VertexBuffer Path="v"><Attribute Usage="Position" Type="Vector3"/><Attribute Usage="Normal" Type="Vector3"/><Attribute Usage="Texture" Type="Vector2"/></VertexBuffer></VertexBuffers>
+        <IndexBuffers><IndexBuffer Path="i" Format="Int16"/></IndexBuffers>
+        <Lights><Light Index="0" Node="1" Type="Point" Enabled="true" AttenuationConstant="1"/><Light Index="1" Node="1" Type="Spot" Enabled="true" AttenuationConstant="1" SpotlightInnerAngle="0.5" SpotlightOuterAngle="2.5" SpotlightFalloff="2"/></Lights>
+        <Updates><Material Node="0" Name="NormalDepth" Time="0 1 2" Value="0 0.25 0.25"/><LightAC Light="0" Time="0 1 2" Value="1 1 6"/></Updates></Scene>` },
+      { name: "v", data: new Uint8Array(vertex.buffer) },
+      { name: "i", data: new Uint8Array(new Uint16Array([0,1,2,0,2,3]).buffer) }
+    ]);
+    await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
+    const result = await page.evaluate(async ({archive, backend}) => {
+      const GPU = await import("three/webgpu");
+      const GL = await import("three");
+      const format = await import("../dist/index.js");
+      const adapter = await import("../dist/three/index.js");
+      if (backend === "webgpu") {
+        const available = await (navigator as Navigator & {gpu?: {requestAdapter():Promise<unknown>}}).gpu?.requestAdapter();
+        if (!available) return { unsupported: true };
+      }
+      const module = backend === "webgl" ? GL : GPU;
+      const canvas = document.createElement("canvas");canvas.width = canvas.height = 160;document.body.append(canvas);
+      const renderer = backend === "webgl" ? new GL.WebGLRenderer({canvas, preserveDrawingBuffer:true}) : new GPU.WebGPURenderer({canvas, forceWebGL:backend === "node-webgl"});
+      if ("init" in renderer) { await renderer.init();await adapter.configureRaw3DWebGPURenderer(renderer, GPU); }
+      renderer.setSize(160,160);
+      const makeImage = (normal: boolean) => {
+        const image = document.createElement("canvas");image.width = image.height = 16;
+        const context = image.getContext("2d")!, pixels = context.createImageData(16,16);
+        for (let y=0;y<16;y++) for (let x=0;x<16;x++) {
+          const index=(y*16+x)*4;
+          pixels.data.set(normal ? [128,128,255,128] : ((x+y)%4<2 ? [255,50,20,255] : [20,220,255,255]), index);
+        }
+        context.putImageData(pixels,0,0);
+        return new Promise<Uint8Array>(resolve => image.toBlob(async blob => resolve(new Uint8Array(await blob!.arrayBuffer()))));
+      };
+      const images = {"normal.png":await makeImage(true), "color.png":await makeImage(false)};
+      const parsed = await format.parseRaw3D(new Uint8Array(archive), {resolveResource:path => images[path as keyof typeof images]});
+      const playback = await adapter.createRaw3DThreePlayback(parsed, {three:module});
+      const scene = new module.Scene();scene.background = new module.Color(0x202020);scene.add(playback.group);
+      const camera = new module.PerspectiveCamera(40,1,.1,50);camera.position.set(2,1,-3);camera.lookAt(0,0,0);camera.updateMatrixWorld(true);
+      const pictures: string[] = [];
+      for (const time of [0,1,2,0]) {
+        playback.seek(time);renderer.render(scene,camera);pictures.push(canvas.toDataURL());
+      }
+      const state = { unsupported:false, pictures, warnings:playback.animation.warnings.length };
+      playback.dispose();renderer.dispose();canvas.remove();return state;
+    }, {archive:[...fixture],backend});
+    test.skip(result.unsupported, "No WebGPU adapter is available.");
+    expect(errors.filter(message => /shader|program|validation|error/i.test(message))).toEqual([]);
+    expect(result.pictures![1]).not.toBe(result.pictures![0]);
+    expect(result.pictures![2]).not.toBe(result.pictures![1]);
+    expect(result.pictures![3]).toBe(result.pictures![0]);
+  });
+}
+
 test("switches an already rendered scene to the enhanced mode", async ({ page }) => {
   const fixture = createZip([{ name: "fixture.demo3d", data: demo3dXmlFixture, method: 8 }]);
   await page.goto(`${baseUrl}/examples/three-render-smoke.html`);
